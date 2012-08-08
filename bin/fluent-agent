@@ -1,0 +1,112 @@
+#!/usr/bin/env perl
+
+use 5.12.0;
+
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+use lib "$FindBin::Bin/../extlib/lib/perl5";
+
+use Log::Minimal;
+local $Log::Minimal::PRINT = sub {
+    my ( $time, $type, $message, $trace,$raw_message) = @_;
+    warn "$time [$type] ($PID) $message at $trace\n";
+};
+
+use Fluent::Agent;
+
+my $HUPPED = undef;
+$SIG{ HUP } = sub { $HUPPED = 1; }; # reopen/reconnect
+my $TERMINATED = undef;
+$SIG{ INT } = $SIG{ TERM } = sub { $TERMINATED = 1; }; # terminate
+
+my $checker_terminated = sub { $TERMINATED };
+my $checker_reconnect = sub {
+    if (shift) {
+        $HUPPED = undef;
+    } else {
+        $HUPPED or $TERMINATED;
+    }
+};
+
+use Getopt::Long;
+use Pod::Usage;
+my $help = 0;
+my $version = 0;
+GetOptions(
+    'help|h|?' => \$help,
+    'version|v' => \$version,
+) or pod2usage(1);
+pod2usage(1) if $help;
+
+my $xxx;
+#TODO
+# fluent-agent -i PATH --format ...... -o PATH --keys .....
+# fluent-agent -i PATH --format ...... -f host:port -s host:port
+# fluent-agent -p port -o PATH --keys .....
+# fluent-agent -p port -f host:port
+# fluent-agent -i PATH --format ... -x FILTER_COMMAND -X PROC_NUM XXXXXXXXXXXXXXXXXXXXXXX #TODO
+
+
+#TODO daemonize here (when specified by option in UNIX like system)
+#TODO use Win32::Detached ?
+
+__END__
+
+=head1 NAME
+
+fluent-agent  - Fluentd Agent tools, perl implementation
+
+=head1 SYNOPSIS
+
+fluent-agent [options]
+
+  Global Options:
+
+    B<-d,--daemonize> Run in background(daemonized)
+    B<-L FILEPATH>    Output fluent-agent's log into I<FILEPATH>
+
+    B<-h,-?,--help>   Brief help message
+    B<-v,--version>   Print version number (and exit)
+
+  Input Options:
+
+    B<-i FILEPATH>     Read messages from I<FILEPATH> (MUST BE SPECIFIED with B<XXX>, exclusive with B<-p>)
+#TODO change this option sign...
+****    B<-p PATTERN>      parse input lines from files by I<PATTERN> regular expression
+    B<-p PORT>         read messages from I<PORT>
+
+    B<--input-file>    Equivalent to B<-f>
+    B<--input-pattern> Equivalent to B<-p> #TODO: FIXME
+    B<--input-port>    Equivalent to B<-p>
+
+  Output Options:
+
+    B<-o FILEPATH>    Write messages to I<FILEPATH> (MUST BE SPECIFIED with B<XXX>, exclusive with B<-f> and B<-s>)
+       xxx NAME_KEYS        format messages
+    B<-f HOST:PORT>   Forward messages to primary server(s), specified by HOST:PORT
+    B<-s HOST:PORT>   Forward messages to secondary server(s) when primary servers are down
+                         #TODO multi specification documents (primary nodes)
+
+  Filter Options:
+
+    xxx COMMAND
+       xxx WRITE_FORMAT
+       xxx READ_FORMAT
+
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+=head1 DESCRIPTION
+
+B<This program> will read the given input file(s) and do something
+useful with the contents thereof.
+
+=cut
