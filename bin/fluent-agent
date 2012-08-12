@@ -70,29 +70,56 @@ fluent-agent [options]
 
   Input Options:
 
-    B<-i FILEPATH>     Read messages from I<FILEPATH> (MUST BE SPECIFIED with B<XXX>, exclusive with B<-p>)
-#TODO change this option sign...
-****    B<-p PATTERN>      parse input lines from files by I<PATTERN> regular expression
-    B<-p PORT>         read messages from I<PORT>
+    B<-i FILEPATH> Read messages from I<FILEPATH> (MUST BE SPECIFIED with B<-I>, exclusive with B<-p>)
+    B<-I REGEXP>   Parse regexp pattern, use with B<-i>
+    B<-p PORT>     read messages from I<PORT>
 
-    B<--input-file>    Equivalent to B<-f>
-    B<--input-pattern> Equivalent to B<-p> #TODO: FIXME
+    B<--input-file>    Equivalent to B<-i>
+    B<--input-pattern> Equivalent to B<-I>
     B<--input-port>    Equivalent to B<-p>
 
   Output Options:
 
-    B<-o FILEPATH>    Write messages to I<FILEPATH> (MUST BE SPECIFIED with B<XXX>, exclusive with B<-f> and B<-s>)
-       xxx NAME_KEYS        format messages
-    B<-f HOST:PORT>   Forward messages to primary server(s), specified by HOST:PORT
-    B<-s HOST:PORT>   Forward messages to secondary server(s) when primary servers are down
-                         #TODO multi specification documents (primary nodes)
+    B<-o FILEPATH>  Write messages to I<FILEPATH> with TAB separated time, tag and JSON of message (exclusive with B<-f> and B<-s>)
+                      FILEPATH parsed as format string like 'strftime' (ex: %Y, %m, %d, %H, %M, %S)
+    B<-f HOST:PORT> Forward messages to primary server(s), specified by HOST:PORT
+    B<-s HOST:PORT> Forward messages to secondary server(s) when primary servers are down
+
+    B<--output-file>                 Equivalent to B<-o>
+    B<--forward-primary HOST:PORT>   Equivalent to B<-f>
+    B<--forward-secondary HOST:PORT> Equivalent to B<-s>
 
   Filter Options:
 
-    xxx COMMAND
-       xxx WRITE_FORMAT
-       xxx READ_FORMAT
+    B<-x COMMAND>   Filter message between input and output, with executed I<COMMAND>'s STDIN and STDOUT
+                      (equivalent with Fluentd's out_exec_filter)
 
+    B<--x-json>     (Default) Serialize/Deserialize messages with JSON (with attributes 'time' and 'tag') on STDIN/STDOUT of filter
+    B<--x-msgpack>  Serialize/Deserialize messages with MessagePack
+
+    B<--x-tsv-in KEYS>
+                    Serialize messages with TSV on STDIN of filter, fields named by I<KEYS>
+    B<--x-tsv-out KEYS>
+                    Deserialize messages with TSV on STDOUT of filter, fields named by I<KEYS>
+
+    B<--x-in-time-field FIELDNAME>
+                    Serialize messages with time field named as I<FIELDNAME>
+    B<--x-out-time-field FIELDNAME>
+                    Deerialize messages with time field named as I<FIELDNAME>
+    B<--x-time-field FIELDNAME>
+                    Same as B<--x-in-time-field FIELDNAME --x-out-time-field FIELDNAME>
+
+    B<--x-tag-field FIELDNAME>
+                    Serialize messages with tag field named as I<FIELDNAME>
+    B<--x-in-tag-field FIELDNAME>
+                    Deserialize messages with tag field named as I<FIELDNAME>
+    B<--x-out-tag-field FIELDNAME>
+                    Same as B<--x-in-tag-field FIELDNAME --x-out-tag-field FIELDNAME>
+
+    B<--x-remove-prefix TAG_PREFIX>
+                    Remove tag prefix before serialization for filter's STDIN
+    B<--x-add-prefix TAG_PREFIX>
+                    Add tag prefix after deserialization for filter's STDOUT
 
 =head1 OPTIONS
 
