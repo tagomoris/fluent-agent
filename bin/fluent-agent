@@ -1,26 +1,23 @@
 #!/usr/bin/env perl
 
-use 5.12.0;
+use 5.14.0;
+use English;
 
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/../extlib/lib/perl5";
 
-use Log::Minimal;
-local $Log::Minimal::PRINT = sub {
-    my ( $time, $type, $message, $trace,$raw_message) = @_;
-    warn "$time [$type] ($PID) $message at $trace\n";
-};
-
 use Fluent::Agent;
 
+my $LOGLEVEL = 'INFO';
+
 my $HUPPED = undef;
-$SIG{ HUP } = sub { $HUPPED = 1; }; # reopen/reconnect
+$SIG{ HUP } = sub { $HUPPED = 1; }; # reopen/reconnect/refork
 my $TERMINATED = undef;
 $SIG{ INT } = $SIG{ TERM } = sub { $TERMINATED = 1; }; # terminate
 
 my $checker_terminated = sub { $TERMINATED };
-my $checker_reconnect = sub {
+my $checker_reload = sub {
     if (shift) {
         $HUPPED = undef;
     } else {
@@ -30,25 +27,134 @@ my $checker_reconnect = sub {
 
 use Getopt::Long;
 use Pod::Usage;
-my $help = 0;
-my $version = 0;
 GetOptions(
-    'help|h|?' => \$help,
-    'version|v' => \$version,
+    'help|h' => \my $help,
+    'daemonize|d' => \my $daemonize,
+    'log|L=s' => \my $logpath,
+    'verbose|v' => sub { $LOGLEVEL = 'DEBUG'; $ENV{LM_DEBUG} = 1; },
+    'quiet|q' => sub { $LOGLEVEL = 'WARN'; },
+    'i|input-file=s'    => \my $input_file,
+    'I|input-pattern=s' => \my $input_pattern,
+    't|tag=s'           => \my $tag_string,
+    'T|tag-field=s'     => \my $tag_field,
+    'w|time-format=s'   => \my $time_format,
+    'W|time-field=s'    => \my $time_field,
+    'p|input-port=i'    => \my $input_port,
+    'P|ping=s'          => \my $ping_options,
+    'o|output-file=s' => \my $output_file,
+    'f|forward-primary=s@' => \my $forward_primary,
+    's|forward-secondary=s@' => \my $forward_secondary,
+    #TODO filter options
 ) or pod2usage(1);
 pod2usage(1) if $help;
 
-my $xxx;
-#TODO
-# fluent-agent -i PATH --format ...... -o PATH --keys .....
-# fluent-agent -i PATH --format ...... -f host:port -s host:port
-# fluent-agent -p port -o PATH --keys .....
-# fluent-agent -p port -f host:port
-# fluent-agent -i PATH --format ... -x FILTER_COMMAND -X PROC_NUM XXXXXXXXXXXXXXXXXXXXXXX #TODO
+### Logs
+use Log::Minimal;
+$Log::Minimal::LOG_LEVEL = $LOGLEVEL;
+$Log::Minimal::AUTODUMP = 1;
+$Log::Minimal::PRINT = $Log::Minimal::DIE = sub {
+    my ( $time, $type, $message, $trace, $raw_message) = @_;
+    die "$time [$type] ($PID) $message at $trace\n";
+};
+croakf "Log path (-L or --log) MUST be specified when daemonized" if $daemonize and not defined($logpath);
+if (defined $logpath) {
+    open(STDOUT, ">> $logpath") or die "failed to reopen STDOUT to $logpath";
+    open(STDERR, ">> $logpath") or die "failed to reopen STDERR to $logpath";
+    use IO::Handle;
+    autoflush STDOUT 1;
+    autoflush STDERR 1;
+}
 
+### Input options
+my $input = undef;
+if (defined $input_file and defined $input_port) {
+    croakf "Cannot specify both of INPUT_FILE(-i) and INPUT_PORT(-p)";
+} elsif (defined $input_file) {
+    croakf("Cannot find specified file readable: %s", $input_file) unless -f $input_file and -r $input_file;
+    croakf("INPUT_PATTERN(-I) MUST be specified with INPUT_FILE(-i) option") unless defined $input_pattern;
+    croakf("TAG(-t) or TAG_FIELD(-T) MUST be specified with INPUT_FILE(-i) option") unless defined $tag_string or defined $tag_field;
+    $input = +{
+        type => 'file',
+        path => $input_file,
+        pattern => qr/$input_pattern/,
+        (defined $tag_string ?
+             (tag_string => $tag_string)
+             :
+             (tag_field => $tag_field)),
+        time_format => $time_format,
+        time_field => ($time_field || 'time'),
+    };
+} elsif (defined $input_port) {
+    $input = +{ type => 'forward', port => $input_port };
+} else {
+    croakf "No one input options specified";
+}
+
+### Output options
+my $output = undef;
+if (defined $output_file and defined $forward_primary) {
+    croakf "Cannot specify both of OUTPUT_FILE(-o) and FORWARD_PRIMARY(-f)";
+} elsif (defined $output_file) {
+    # With time specifier, we cannot check directory/file write permissions
+    $output = +{
+        type => 'file',
+        path => $output_file,
+        # format ?
+    };
+} elsif (defined $forward_primary) {
+    $output = +{
+        type => 'forward',
+        primary => [map { [split(/:/, $_)] } @$forward_primary],
+        secondary => [map { [split(/:/, $_)] } @{$forward_secondary || []}],
+    };
+} else {
+    croakf "No one output options specified";
+}
+
+### TODO Filter options
+my $filter = undef;
+
+### Ping options
+my $ping = undef;
+if (defined $ping_options) {
+    my ($ping_tag,$ping_data,$ping_interval) = split(/:/, $ping_options);
+    $ping_interval ||= 60;
+    croakf "Ping tag is invalid" unless $ping_tag;
+    corakf "Ping data is invalid" unless $ping_data;
+    $ping = +{
+        tag => $ping_tag,
+        data => $ping_data,
+        interval => $ping_interval,
+    };
+}
 
 #TODO daemonize here (when specified by option in UNIX like system)
 #TODO use Win32::Detached ?
+
+sub main {
+    my $agent = Fluent::Agent->new(
+        input => $input,
+        output => $output,
+        filter => $filter,
+        ping => $ping,
+        buffers => undef, #TODO mmmmm.....
+    );
+
+    $agent->execute(
+        checker => {
+            term => $checker_terminated,
+            reload => $checker_reload,
+        },
+    );
+}
+
+infof "Starting fluent-agent.";
+
+main();
+
+infof "Exiting fluent-agent.";
+
+exit 0;
 
 __END__
 
@@ -63,36 +169,55 @@ fluent-agent [options]
   Global Options:
 
     B<-d,--daemonize> Run in background(daemonized)
-    B<-L FILEPATH>    Output fluent-agent's log into I<FILEPATH>
+    B<-L,--log FILEPATH>    Output fluent-agent's log into I<FILEPATH> (if not specified, dropped)
 
-    B<-h,-?,--help>   Brief help message
-    B<-v,--version>   Print version number (and exit)
+    B<-h,--help>    Brief help message
+    B<-v,--verbose> Output fluent-agent logs of all (DEBUG/INFO/WARN/CRIT, default + DEBUG)
+    B<-q,--quiet>   Output fluent-agent logs of WARN/CRIT only (default: INFO/WARN/CRIT)
+
+    B<-P TAG:DATA:INTERVAL> Ping message tag/data/interval. Use with forwarding options.
+    B<--ping>              Equivalent to B<-P>
 
   Input Options:
 
-    B<-i FILEPATH> Read messages from I<FILEPATH> (MUST BE SPECIFIED with B<-I>, exclusive with B<-p>)
-    B<-I REGEXP>   Parse regexp pattern, use with B<-i>
-    B<-p PORT>     read messages from I<PORT>
+    B<-i FILEPATH> Read messages from I<FILEPATH>
+                     (MUST BE SPECIFIED with B<-I> and B<-t> or B<-T>, exclusive with B<-p>)
+    B<-I REGEXP>     Parse regexp pattern, use with B<-i>
+    B<-t TAG>      Tag of input log lines (exclusive with B<-T>)
+    B<-T FIELD>    Field name of tag string, from REGEXP named captures
+    B<-w PATTERN>  Time format (strptime format string) to parse time of log
+                     (Without this option, time is set as current time)
+    B<-W FIELD>    Field name of time, from REGEXP named captures (default: time)
+
+    B<-p PORT>     read messages from I<PORT> (compatible with fluentd's forward input)
 
     B<--input-file>    Equivalent to B<-i>
     B<--input-pattern> Equivalent to B<-I>
+    B<--tag>           Equivalent to B<-t>
+    B<--tag-field>     Equivalent to B<-T>
+    B<--time-format>   Equivalent to B<-w>
+    B<--time-field>    Equivalent to B<-W>
+
     B<--input-port>    Equivalent to B<-p>
 
   Output Options:
 
-    B<-o FILEPATH>  Write messages to I<FILEPATH> with TAB separated time, tag and JSON of message (exclusive with B<-f> and B<-s>)
+    B<-o FILEPATH>  Write messages to I<FILEPATH> with TAB separated time, tag and JSON of message
+                      (exclusive with B<-f> and B<-s>)
                       FILEPATH parsed as format string like 'strftime' (ex: %Y, %m, %d, %H, %M, %S)
     B<-f HOST:PORT> Forward messages to primary server(s), specified by HOST:PORT
     B<-s HOST:PORT> Forward messages to secondary server(s) when primary servers are down
 
-    B<--output-file>                 Equivalent to B<-o>
-    B<--forward-primary HOST:PORT>   Equivalent to B<-f>
-    B<--forward-secondary HOST:PORT> Equivalent to B<-s>
+    B<--output-file>       Equivalent to B<-o>
+    B<--forward-primary>   Equivalent to B<-f>
+    B<--forward-secondary> Equivalent to B<-s>
 
   Filter Options:
 
     B<-x COMMAND>   Filter message between input and output, with executed I<COMMAND>'s STDIN and STDOUT
                       (equivalent with Fluentd's out_exec_filter)
+    B<-X NUM>       Number of filter child processes (number of forks)
+    B<--x-respawn>  Respawn childs which unexpectedly died (default: main process also dies)
 
     B<--x-json>     (Default) Serialize/Deserialize messages with JSON (with attributes 'time' and 'tag') on STDIN/STDOUT of filter
     B<--x-msgpack>  Serialize/Deserialize messages with MessagePack
