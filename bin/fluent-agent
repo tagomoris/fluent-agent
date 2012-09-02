@@ -25,39 +25,29 @@ my $checker_reload = sub {
     }
 };
 
-use Getopt::Long;
+use Fluent::Agent::Options;
+my $opt = Fluent::Agent::Options->parse();
+
 use Pod::Usage;
-GetOptions(
-    'help|h' => \my $help,
-    'daemonize|d' => \my $daemonize,
-    'log|L=s' => \my $logpath,
-    'verbose|v' => sub { $LOGLEVEL = 'DEBUG'; $ENV{LM_DEBUG} = 1; },
-    'quiet|q' => sub { $LOGLEVEL = 'WARN'; },
-    'i|input-file=s'    => \my $input_file,
-    'I|input-pattern=s' => \my $input_pattern,
-    't|tag=s'           => \my $tag_string,
-    'T|tag-field=s'     => \my $tag_field,
-    'w|time-format=s'   => \my $time_format,
-    'W|time-field=s'    => \my $time_field,
-    'p|input-port=i'    => \my $input_port,
-    'P|ping=s'          => \my $ping_options,
-    'o|output-file=s' => \my $output_file,
-    'f|forward-primary=s@' => \my $forward_primary,
-    's|forward-secondary=s@' => \my $forward_secondary,
-    #TODO filter options
-) or pod2usage(1);
-pod2usage(1) if $help;
+pod2usage(1) if $opt->{help};
+if ($opt->{quiet}) {   $LOGLEVEL = 'WARN'; }
+if ($opt->{verbose}) { $LOGLEVEL = 'DEBUG'; $ENV{LM_DEBUG} = 1; }
 
 ### Logs
 use Log::Minimal;
 $Log::Minimal::LOG_LEVEL = $LOGLEVEL;
 $Log::Minimal::AUTODUMP = 1;
-$Log::Minimal::PRINT = $Log::Minimal::DIE = sub {
+$Log::Minimal::PRINT = sub {
+    my ( $time, $type, $message, $trace, $raw_message) = @_;
+    print "$time [$type] ($PID) $message at $trace\n";
+};
+$Log::Minimal::DIE = sub {
     my ( $time, $type, $message, $trace, $raw_message) = @_;
     die "$time [$type] ($PID) $message at $trace\n";
 };
-croakf "Log path (-L or --log) MUST be specified when daemonized" if $daemonize and not defined($logpath);
-if (defined $logpath) {
+croakf "Log path (-L or --log) MUST be specified when daemonized" if $opt->{daemonize} and not defined($opt->{logpath});
+if (defined $opt->{logpath}) {
+    my $logpath = $opt->{logpath};
     open(STDOUT, ">> $logpath") or die "failed to reopen STDOUT to $logpath";
     open(STDERR, ">> $logpath") or die "failed to reopen STDERR to $logpath";
     use IO::Handle;
@@ -67,9 +57,12 @@ if (defined $logpath) {
 
 ### Input options
 my $input = undef;
-if (defined $input_file and defined $input_port) {
+if (defined $opt->{input_file} and defined $opt->{input_port}) {
     croakf "Cannot specify both of INPUT_FILE(-i) and INPUT_PORT(-p)";
-} elsif (defined $input_file) {
+} elsif (defined $opt->{input_file}) {
+    my ($input_file, $input_pattern, $tag_string, $tag_field, $time_format, $time_field) = (
+        $opt->{input_file}, $opt->{input_pattern}, $opt->{tag_string}, $opt->{tag_field}, $opt->{time_format}, $opt->{time_field},
+    );
     croakf("Cannot find specified file readable: %s", $input_file) unless -f $input_file and -r $input_file;
     croakf("INPUT_PATTERN(-I) MUST be specified with INPUT_FILE(-i) option") unless defined $input_pattern;
     croakf("TAG(-t) or TAG_FIELD(-T) MUST be specified with INPUT_FILE(-i) option") unless defined $tag_string or defined $tag_field;
@@ -84,49 +77,53 @@ if (defined $input_file and defined $input_port) {
         time_format => $time_format,
         time_field => ($time_field || 'time'),
     };
-} elsif (defined $input_port) {
-    $input = +{ type => 'forward', port => $input_port };
+} elsif (defined $opt->{input_port}) {
+    $input = +{ type => 'forward', port => $opt->{input_port} };
 } else {
     croakf "No one input options specified";
 }
+debugf "Configured input: %s", $input;
 
 ### Output options
 my $output = undef;
-if (defined $output_file and defined $forward_primary) {
+if (defined $opt->{output_file} and defined $opt->{forward_primary}) {
     croakf "Cannot specify both of OUTPUT_FILE(-o) and FORWARD_PRIMARY(-f)";
-} elsif (defined $output_file) {
+} elsif (defined $opt->{output_file}) {
     # With time specifier, we cannot check directory/file write permissions
     $output = +{
         type => 'file',
-        path => $output_file,
+        path => $opt->{output_file},
         # format ?
     };
-} elsif (defined $forward_primary) {
+} elsif (defined $opt->{forward_primary}) {
     $output = +{
         type => 'forward',
-        primary => [map { [split(/:/, $_)] } @$forward_primary],
-        secondary => [map { [split(/:/, $_)] } @{$forward_secondary || []}],
+        primary => [map { [split(/:/, $_)] } @{$opt->{forward_primary}}],
+        secondary => [map { [split(/:/, $_)] } @{$opt->{forward_secondary} || []}],
     };
 } else {
     croakf "No one output options specified";
 }
+debugf "Configured output: %s", $output;
 
 ### TODO Filter options
 my $filter = undef;
+debugf "Configured filter: %s", ($filter || 'undefined');
 
 ### Ping options
 my $ping = undef;
-if (defined $ping_options) {
-    my ($ping_tag,$ping_data,$ping_interval) = split(/:/, $ping_options);
+if (defined $opt->{ping_options}) {
+    my ($ping_tag,$ping_data,$ping_interval) = split(/:/, $opt->{ping_options});
     $ping_interval ||= 60;
     croakf "Ping tag is invalid" unless $ping_tag;
-    corakf "Ping data is invalid" unless $ping_data;
+    croakf "Ping data is invalid" unless $ping_data;
     $ping = +{
         tag => $ping_tag,
         data => $ping_data,
         interval => $ping_interval,
     };
 }
+debugf "Configured ping: %s", ($ping || 'undefined');
 
 #TODO daemonize here (when specified by option in UNIX like system)
 #TODO use Win32::Detached ?
@@ -139,7 +136,6 @@ sub main {
         ping => $ping,
         buffers => undef, #TODO mmmmm.....
     );
-
     $agent->execute(
         checker => {
             term => $checker_terminated,
