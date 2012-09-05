@@ -8,7 +8,7 @@ use Try::Tiny;
 use Time::Piece;
 use Time::HiRes;
 
-# use UV; mmm...
+use UV;
 
 use Fluent::Agent::Input;
 use Fluent::Agent::Output;
@@ -36,12 +36,26 @@ sub new {
 sub init {
     my $self = shift;
     debugf "Initializing Fluent::Agent";
-    #TODO catch exceptions
-    $self->{input}->init();
+
+    try { $self->{input}->init(); } catch {
+        croakf "Failed to initialize input: %s", $_;
+    };
     $self->{ping} and $self->{ping}->init();
-    $self->{filter} and $self->{filter}->init();
-    $self->{output}->init();
+    try { $self->{filter} and $self->{filter}->init(); } catch {
+        croakf "Failed to initialize filter: %s", $_;
+    };
+    try { $self->{output}->init(); } catch {
+        croakf "Failed to initialize output: %s", $_;
+    };
+
     debugf "Initializing complete";
+}
+
+sub start {
+    my $self = shift;
+    debugf "Starting Fluent::Agent uv event loop ...";
+    UV::run();
+    debugf "Started.";
 }
 
 sub stop {
@@ -61,11 +75,38 @@ sub execute {
     my $check_terminated = $args{checker}{term};
     my $check_reload = $args{checker}{reload};
 
-    while(not $check_terminated->()) {
-        $self->init(); # first initialization, or got reload
-        $self->run($check_reload);
-    }
-    warnf "Process terminated";
+    #TODO: setup of object storage
+
+    #TODO: register timer to check check_reload/check_terminated
+    # $check_reload->()
+    # $check_terminated->()
+
+    infof "Start to initialize plugins.";
+
+    $self->init();
+
+    infof "All plugins are successfully initialized, starting agent...";
+
+    $self->start();
+
+    infof "Fluent::Agent exits.";
 }
 
 1;
+
+# Agentのオブジェクトストレージ
+# - input参照とoutput参照が同一のもの : filterがないケース
+# - input参照とfilter stdin参照が同一、filter stdout参照とoutput参照が同一 : filterがあるケース
+# pluginのinitはオブジェクトストレージつけてやらないとダメか
+
+# Agent側のタイマ
+# - reload/termフラグをチェック、立ってたら処理
+# - オブジェクトストレージの列をチェックして flush タイミングになったらマークしてflushed列に移す
+
+# Input Plugin
+# - fdを監視するイベント登録、きたら処理
+
+# Output plugin
+# - タイマ登録、オブジェクトストレージのflushedを監視して、あったらゲットして処理
+
+# 3. UV::run()
