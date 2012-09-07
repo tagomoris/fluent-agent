@@ -3,8 +3,6 @@ package Fluent::Agent v0.0.1;
 use 5.014;
 use Log::Minimal;
 
-use Try::Tiny;
-
 use Time::Piece;
 use Time::HiRes;
 
@@ -17,6 +15,8 @@ use Fluent::Agent::Output;
 use Fluent::Agent::PingMessage;
 
 #TODO use Fluent::Agent::Filter;
+
+our $QUEUE_FLUSHER_INTERVAL = 100; # ms
 
 sub new {
     # input, output, filter, ping, buffers
@@ -45,6 +45,10 @@ sub new {
                 reading => [],
             },
         ))
+    };
+    $self->{timers} = {
+        queue => undef,
+        signal => undef,
     };
 
     return bless $self, $this;
@@ -83,19 +87,57 @@ sub queue {
     }
 }
 
+sub move_queues {
+    my $self = shift;
+    my $primary = $self->{queues}->{primary};
+    my $secondary = $self->{queues}->{secondary};
+    foreach my $queue ($primary, ($secondary || ())) {
+        my $size = scalar(@{$queue->{writing}});
+        for (my $i = $size - 1 ; $i >= 0 ; $i--) {
+            if ($queue->{writing}->[$i]->marked()) {
+                my ($buf) = splice($queue->{writing}, $i, 1);
+                push $queue->{reading}, $buf;
+            }
+        }
+    }
+}
+
 sub init {
     my $self = shift;
     debugf "Initializing Fluent::Agent";
 
     $self->{input}->init( $self->queue('input') );
-
     $self->{ping}->init( $self->queue('ping') ) if $self->{ping};
-
     $self->{filter}->init( $self->queue('filter stdin'),  $self->queue('filter stdout') ) if $self->{filter};
-
     $self->{output}->init( $self->queue('output') );
 
     debugf "Initializing complete";
+}
+
+sub setup_queue_timer {
+    my $self = shift;
+    my $timer_queues = UV::timer_init();
+    UV::timer_start($timer_queues, $QUEUE_FLUSHER_INTERVAL, $QUEUE_FLUSHER_INTERVAL, sub { $self->move_queues(); });
+    $self->{timers}->{queue} = $timer_queues;
+    $self;
+}
+
+sub setup_signal_watcher {
+    my ($self, $term, $reload) = @_;
+    my $timer_signal_watcher = UV::timer_init();
+    my $watcher = sub {
+        return unless $reload->();
+        if ($term->()) {
+            $self->stop();
+        }
+        else {
+            $self->reload();
+            $reload->(1); # reload done
+        }
+    };
+    UV::timer_start($timer_queues, $QUEUE_FLUSHER_INTERVAL, $QUEUE_FLUSHER_INTERVAL, $watcher);
+    $self->{timers}->{signal} = $timer_signal_watcher;
+    $self;
 }
 
 sub start {
@@ -105,11 +147,24 @@ sub start {
     debugf "Exited uv event loop ...";
 }
 
-#### TODO rewrite
+sub reload {
+    my $self = shift;
+
+    infof "reloading all plugins";
+    $self->{input}->stop();
+    $self->{ping} and $self->{ping}->stop();
+    $self->{filter} and $self->{filter}->stop();
+    $self->{output}->stop();
+
+    $self->{input}->init( $self->queue('input') );
+    $self->{ping}->init( $self->queue('ping') ) if $self->{ping};
+    $self->{filter}->init( $self->queue('filter stdin'),  $self->queue('filter stdout') ) if $self->{filter};
+    $self->{output}->init( $self->queue('output') );
+}
+
 sub stop {
     my $self = shift;
     debug "Stopping Fluent::Agent";
-    #TODO catch exceptions
     $self->{input}->stop();
     $self->{ping} and $self->{ping}->stop();
     $self->{filter} and $self->{filter}->stop();
@@ -122,15 +177,14 @@ sub execute {
     my $check_terminated = $args{checker}{term};
     my $check_reload = $args{checker}{reload};
 
-    #TODO: register timer to check check_reload/check_terminated
-    # $check_reload->()
-    # $check_terminated->()
-
     infof "Start to initialize plugins.";
 
     $self->init();
 
     infof "All plugins are successfully initialized, starting agent...";
+
+    $self->setup_queue_timer();
+    $self->setup_signal_watcher($check_terminated, $check_reload);
 
     $self->start();
 
@@ -139,14 +193,10 @@ sub execute {
 
 1;
 
-# Agent側のタイマ
-# - reload/termフラグをチェック、立ってたら処理
-# - オブジェクトストレージの列をチェックして flush タイミングになったらマークしてflushed列に移す
-
 # Input Plugin
 # - fdを監視するイベント登録、きたら処理
+#   - writing buffer の check() を監視して、いっぱいだったら mark() する
+#   - writing queue に buffer がなければ new して push する
 
 # Output plugin
 # - タイマ登録、オブジェクトストレージのflushedを監視して、あったらゲットして処理
-
-# 3. UV::run()
