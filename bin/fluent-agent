@@ -215,7 +215,8 @@ fluent-agent [options]
     B<-X NUM>       Number of filter child processes (number of forks)
     B<--x-respawn>  Respawn childs which unexpectedly died (default: main process also dies)
 
-    B<--x-json>     (Default) Serialize/Deserialize messages with JSON (with attributes 'time' and 'tag') on STDIN/STDOUT of filter
+    B<--x-json>     (Default) Serialize/Deserialize messages with JSON
+                             (with attributes 'time' and 'tag') on STDIN/STDOUT of filter
     B<--x-msgpack>  Serialize/Deserialize messages with MessagePack
 
     B<--x-tsv-in KEYS>

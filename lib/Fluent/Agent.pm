@@ -44,7 +44,7 @@ sub new {
                 writing => [],
                 reading => [],
             },
-        ))
+        ) : ())
     };
     $self->{timers} = {
         queue => undef,
@@ -135,7 +135,7 @@ sub setup_signal_watcher {
             $reload->(1); # reload done
         }
     };
-    UV::timer_start($timer_queues, $QUEUE_FLUSHER_INTERVAL, $QUEUE_FLUSHER_INTERVAL, $watcher);
+    UV::timer_start($timer_signal_watcher, $QUEUE_FLUSHER_INTERVAL, $QUEUE_FLUSHER_INTERVAL, $watcher);
     $self->{timers}->{signal} = $timer_signal_watcher;
     $self;
 }
@@ -157,7 +157,7 @@ sub reload {
 
 sub stop {
     my $self = shift;
-    debug "Stopping Fluent::Agent";
+    debugf "Stopping Fluent::Agent";
     $self->{input}->stop();
     $self->{ping} and $self->{ping}->stop();
     $self->{filter} and $self->{filter}->stop();
