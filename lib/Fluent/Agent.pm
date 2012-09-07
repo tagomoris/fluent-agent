@@ -55,6 +55,12 @@ sub queue {
     my $primary = $self->{queues}->{primary};
     my $secondary = $self->{queues}->{secondary};
 
+    # if filter doesn't exist:
+    #  input -> primary{writing} -> (+ ping) -> primary{reading} -> output
+    # if filter exists
+    #  input -> pri{writing} -> pri{reading} -> filter stdin
+    #  filter stdout -> secondary{writing} -> (+ping) -> secondary{reading} -> output
+
     if ($type eq 'input') {
         return $primary->{writing};
     }
@@ -132,11 +138,6 @@ sub execute {
 }
 
 1;
-
-# Agentのオブジェクトストレージ
-# - input参照とoutput参照が同一のもの : filterがないケース
-# - input参照とfilter stdin参照が同一、filter stdout参照とoutput参照が同一 : filterがあるケース
-# pluginのinitはオブジェクトストレージつけてやらないとダメか
 
 # Agent側のタイマ
 # - reload/termフラグをチェック、立ってたら処理
