@@ -1,6 +1,7 @@
-package Fluent::Agent::Output v0.0.1;
+package Fluent::Agent::Output;
 
-use 5.14.0;
+use 5.014;
+use English;
 use Log::Minimal;
 
 use Fluent::Agent::FileOutput;

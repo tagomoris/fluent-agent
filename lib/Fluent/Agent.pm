@@ -140,13 +140,6 @@ sub setup_signal_watcher {
     $self;
 }
 
-sub start {
-    my $self = shift;
-    debugf "Starting agent uv event loop ...";
-    UV::run();
-    debugf "Exited uv event loop ...";
-}
-
 sub reload {
     my $self = shift;
 
@@ -170,6 +163,13 @@ sub stop {
     $self->{filter} and $self->{filter}->stop();
     $self->{output}->stop();
     debugf "Stopping complete";
+}
+
+sub start {
+    my $self = shift;
+    debugf "Starting agent uv event loop ...";
+    UV::run();
+    debugf "Exited uv event loop ...";
 }
 
 sub execute {
