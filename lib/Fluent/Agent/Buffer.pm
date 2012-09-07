@@ -12,6 +12,8 @@ sub new {
     bless $self, $this;
 }
 
+sub marked { (shift)->{mark}; }
+
 sub mark {
     my $self = shift;
     $self->{mark} = 1;
