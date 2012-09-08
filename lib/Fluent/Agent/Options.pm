@@ -5,7 +5,7 @@ sub parse {
     # So we should parse all of single char options by Getopt::Std, and later, parse long options by Getopt::Long
     use Getopt::Std;
     my %opts;
-    getopts('hdL:vqi:I:t:T:w:W:p:o:f:s:P:', \%opts); #TODO filter options
+    getopts('hdL:vqi:I:t:T:w:W:p:o:f:s:P:E', \%opts); #TODO filter options
 
     my %options;
     use Getopt::Long;
@@ -16,6 +16,7 @@ sub parse {
                      input-port=i
                      output-file=s
                      forward-primary=s@ forward-secondary=s@
+                     stderr
                      ping=s
              )); #TODO filter options
     return merge_commandline_option(%opts, %options);
@@ -56,6 +57,8 @@ sub merge_commandline_option {
 
         forward_primary   => merge_list($args, 'f', 'forward-primary', undef),
         forward_secondary => merge_list($args, 's', 'forward-secondary', undef),
+
+        stderr => merge_list($args, 'E', 'stderr', undef),
 
         ping_options => merge($args, 'P', 'ping', undef),
 

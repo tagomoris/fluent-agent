@@ -4,14 +4,10 @@ use 5.014;
 use English;
 use Log::Minimal;
 
-use Time::Piece;
-use Time::HiRes;
-
-use UV;
+use base 'Fluent::Agent::BaseOutput';
 
 use IO::Socket::INET;
 use Data::MessagePack;
-use JSON::XS;
 
 use constant DEFAULT_SOCKET_TIMEOUT => 5; # 5sec
 
@@ -22,16 +18,13 @@ use constant DEFAULT_RECONNECT_WAIT_MAX => 3600; # 60min
 
 use constant RECONNECT_WAIT_INCR_RATE => 1.5;
 
-sub new {
-    my ($this, %args) = @_;
-    bless +{}, $this;
+sub start {
 }
 
-sub init {
-    my ($self, $queue) = @_; # reading queue (arrayref)
+sub output {
 }
 
-sub stop {
+sub shutdown {
     my ($self) = @_;
 }
 

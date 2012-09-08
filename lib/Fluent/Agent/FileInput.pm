@@ -4,26 +4,21 @@ use 5.014;
 use English;
 use Log::Minimal;
 
-use Time::Piece;
-use Time::HiRes;
-
 use UV;
 
-use Data::MessagePack;
-use JSON::XS;
+use base 'Fluent::Agent::BaseInput';
 
-use Fluent::Agent::Buffer;
-
-sub new {
-    my ($this, %args) = @_;
-    bless +{}, $this;
+sub configure {
+    my ($self, %args) = @_;
+    ####
 }
 
-sub init {
-    my ($self, $queue) = @_; # writing queue (arrayref)
+sub start {
+    my ($self) = @_;
 }
 
-sub stop {
+sub shutdown {
+    my ($self) = @_;
 }
 
 1;

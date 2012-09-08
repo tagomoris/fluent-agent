@@ -101,6 +101,10 @@ if (defined $opt->{output_file} and defined $opt->{forward_primary}) {
         primary => [map { [split(/:/, $_)] } @{$opt->{forward_primary}}],
         secondary => [map { [split(/:/, $_)] } @{$opt->{forward_secondary} || []}],
     };
+} elsif (defined $opt->{stderr}) {
+    $output = +{
+        type => 'stderr',
+    };
 } else {
     croakf "No one output options specified";
 }
@@ -187,6 +191,36 @@ fluent-agent [options]
 
     B<-p PORT>     read messages from I<PORT> (compatible with fluentd's forward input)
 
+  Output Options:
+
+    B<-o FILEPATH>  Write messages to I<FILEPATH> with TAB separated time, tag and JSON of message
+                      (exclusive with B<-f> and B<-s>)
+                      FILEPATH parsed as format string like 'strftime' (ex: %Y, %m, %d, %H, %M, %S)
+    B<-f HOST:PORT> Forward messages to primary server(s), specified by HOST:PORT
+    B<-s HOST:PORT> Forward messages to secondary server(s) when primary servers are down
+
+    B<-E>           Write messages to stderr (for debug)
+
+  OMIT FILTER HELP...
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-help>
+
+Print a brief help message and exits.
+
+=back
+
+=head1 DESCRIPTION
+
+B<This program> will read the given input file(s) and do something
+useful with the contents thereof.
+
+=cut
+
+__DATA__
     B<--input-file>    Equivalent to B<-i>
     B<--input-pattern> Equivalent to B<-I>
     B<--tag>           Equivalent to B<-t>
@@ -196,17 +230,10 @@ fluent-agent [options]
 
     B<--input-port>    Equivalent to B<-p>
 
-  Output Options:
-
-    B<-o FILEPATH>  Write messages to I<FILEPATH> with TAB separated time, tag and JSON of message
-                      (exclusive with B<-f> and B<-s>)
-                      FILEPATH parsed as format string like 'strftime' (ex: %Y, %m, %d, %H, %M, %S)
-    B<-f HOST:PORT> Forward messages to primary server(s), specified by HOST:PORT
-    B<-s HOST:PORT> Forward messages to secondary server(s) when primary servers are down
-
     B<--output-file>       Equivalent to B<-o>
     B<--forward-primary>   Equivalent to B<-f>
     B<--forward-secondary> Equivalent to B<-s>
+    B<--stderr>            Equivalent to B<-E>
 
   Filter Options:
 
@@ -242,20 +269,3 @@ fluent-agent [options]
                     Remove tag prefix before serialization for filter's STDIN
     B<--x-add-prefix TAG_PREFIX>
                     Add tag prefix after deserialization for filter's STDOUT
-
-=head1 OPTIONS
-
-=over 8
-
-=item B<-help>
-
-Print a brief help message and exits.
-
-=back
-
-=head1 DESCRIPTION
-
-B<This program> will read the given input file(s) and do something
-useful with the contents thereof.
-
-=cut

@@ -27,6 +27,8 @@ sub check {
     return 1;
 }
 
+# data: arrayref of record
+# record: [tag, time, hashref-of-data]
 sub data { (shift)->{data}; }
 
 1;

@@ -157,11 +157,18 @@ sub reload {
 
 sub stop {
     my $self = shift;
+
     debugf "Stopping Fluent::Agent";
+
+    UV::timer_stop($self->{timers}->{signal});
+    UV::timer_stop($self->{timers}->{queue});
+
     $self->{input}->stop();
     $self->{ping} and $self->{ping}->stop();
     $self->{filter} and $self->{filter}->stop();
     $self->{output}->stop();
+
+
     debugf "Stopping complete";
 }
 
