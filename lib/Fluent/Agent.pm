@@ -24,8 +24,9 @@ sub new {
     my $self = +{
         filtered => 0,
         input => Fluent::Agent::Input->new(%{$args{input}}),
-        output => Fluent::Agent::Output->new(%{$args{input}}),
+        output => Fluent::Agent::Output->new(%{$args{output}}),
     };
+    debugf "Fluent::Agent initializing with options: %s", $self;
     if (defined $args{ping}) {
         $self->{ping} = Fluent::Agent::PingMessage->new(%{$args{ping}});
     }
@@ -91,10 +92,12 @@ sub move_queues {
     my $self = shift;
     my $primary = $self->{queues}->{primary};
     my $secondary = $self->{queues}->{secondary};
+
     foreach my $queue ($primary, ($secondary || ())) {
         my $size = scalar(@{$queue->{writing}});
         for (my $i = $size - 1 ; $i >= 0 ; $i--) {
             if ($queue->{writing}->[$i]->marked()) {
+                debugf "moving marked buffer....";
                 my ($buf) = splice($queue->{writing}, $i, 1);
                 push $queue->{reading}, $buf;
             }
@@ -117,6 +120,7 @@ sub init {
 sub setup_queue_timer {
     my $self = shift;
     my $timer_queues = UV::timer_init();
+    debugf "Starting queue timer";
     UV::timer_start($timer_queues, $QUEUE_FLUSHER_INTERVAL, $QUEUE_FLUSHER_INTERVAL, sub { $self->move_queues(); });
     $self->{timers}->{queue} = $timer_queues;
     $self;
@@ -135,6 +139,7 @@ sub setup_signal_watcher {
             $reload->(1); # reload done
         }
     };
+    debugf "Starting signal watcher";
     UV::timer_start($timer_signal_watcher, $QUEUE_FLUSHER_INTERVAL, $QUEUE_FLUSHER_INTERVAL, $watcher);
     $self->{timers}->{signal} = $timer_signal_watcher;
     $self;

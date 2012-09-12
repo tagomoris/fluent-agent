@@ -13,12 +13,13 @@ sub start {
     use IO::Handle;
     autoflush STDOUT 1;
     autoflush STDERR 1;
-    $self->{json} = JSON::XS->new->utf;
+    $self->{json} = JSON::XS->new->utf8;
 }
 
 sub output {
     my ($self, $buffer) = @_;
-    while ( my $record = shift($buffer->{data}) ) {
+    debugf "Let's output data: %s", $buffer;
+    while ( my $record = $buffer->next_record ) {
         print STDERR $record->[0], " ", $record->[1], " ", $self->{json}->encode($record->[2]), "\n";
     }
 }

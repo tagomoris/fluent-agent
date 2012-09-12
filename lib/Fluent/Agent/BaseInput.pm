@@ -62,7 +62,6 @@ sub emit {
     $buffer->mark() if $buffer->check();
 }
 
-
 # record: [tag, time, hashref-of-data]
 sub emits {
     my ($self, @records) = @_;
@@ -70,6 +69,12 @@ sub emits {
     push $buffer->data, @records;
 
     $buffer->mark() if $buffer->check();
+}
+
+# (tag, arrayref-of-[time, record]) OR (tag, msgpack-of-arrayref-of-[time, record])
+sub emits_entries {
+    my ($self, $tag, $data) = @_;
+    push $self->{queue}, Fluent::Agent::Buffer->new(tag => $tag, data => $data);
 }
 
 sub stop {

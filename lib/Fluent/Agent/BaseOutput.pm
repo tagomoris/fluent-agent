@@ -10,6 +10,7 @@ use constant DEFAULT_OUTPUT_EVENT_INTERVAL => 100; # ms
 
 sub new {
     my ($this, %args) = @_;
+    debugf "Initializing Output: %s", {this => $this, args => \%args};
     my $self = +{};
     bless $self, $this;
 
@@ -28,12 +29,15 @@ sub init {
     infof "Starting Output plugin: %s", ref($self);
 
     $self->{queue} = $queue;
+    $self->{interval} = $self->{watch_interval} || DEFAULT_OUTPUT_EVENT_INTERVAL;
 
     $self->start() if $self->can('start');
 
     my $output_callback = sub {
         return if scalar(@{$self->{queue}}) < 1;
+        debugf "output queue size %s, to output", scalar(@{$self->{queue}});
         my $buffer = shift $self->{queue};
+        debugf "output plugin %s", ref($self);
         $self->output($buffer);
     };
 
