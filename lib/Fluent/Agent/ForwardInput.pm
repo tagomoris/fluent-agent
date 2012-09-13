@@ -32,6 +32,8 @@ sub start {
         my ($nread, $buf, $sockaddr, $flags) = @_;
         warnf "udp_recv callback arguments: %s", {buf => $buf, sockaddr => $sockaddr, flags => $flags};
         ####TODO write...
+        ####TODO bin/fluent-agent -P ping:BJA.local:3 -p 24224 -E
+        ####TODO USE fluentd -c ~/hoge.conf
         # UV::udp_send($udp, "", 'ip', port, sub{});
     })
         && croakf 'udp recv_start error, port %s: %s', $self->{port}, UV::strerror(UV::last_error());
@@ -57,6 +59,7 @@ sub start {
 
 sub read {
     my ($self, $client, $nread, $buf) = @_;
+    debugf "read from client str %s, client %s, nread %s", "$client", $client, $nread;
     my $client_key = "$client";
     if ($nread < 0) {
         my $err = UV::last_error();
@@ -91,13 +94,15 @@ sub read {
     #   3: object record
     # }
     my $msg;
+    debugf "open_sockets %s", $self->{open_sockets};
+    debugf "client socket %s", $self->{open_sockets}->{$client_key};
     my $fullbuf = $self->{open_sockets}->{$client_key}->{buf} . $buf;
     try {
         $msg = $self->{mp}->unpack($fullbuf);
         $self->{open_sockets}->{$client_key}->{buf} = '';
     } catch {
         $msg = undef;
-        $self->{open_sockets}->{$client_key} = $fullbuf;
+        $self->{open_sockets}->{$client_key}->{buf} = $fullbuf;
     };
     return unless $msg;
 
