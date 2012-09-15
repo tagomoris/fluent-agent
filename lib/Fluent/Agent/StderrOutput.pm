@@ -17,11 +17,12 @@ sub start {
 }
 
 sub output {
-    my ($self, $buffer) = @_;
+    my ($self, $buffer, $cb) = @_;
     debugf "Let's output data: %s", $buffer;
     while ( my $record = $buffer->next_record ) {
         print STDERR $record->[0], " ", $record->[1], " ", $self->{json}->encode($record->[2]), "\n";
     }
+    $cb->(1);
 }
 
 1;

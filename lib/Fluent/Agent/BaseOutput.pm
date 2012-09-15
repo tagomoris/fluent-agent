@@ -33,17 +33,23 @@ sub init {
 
     $self->start() if $self->can('start');
 
-    my $output_callback = sub {
+    my $output_timer_event = sub {
         return if scalar(@{$self->{queue}}) < 1;
         debugf "output queue size %s, to output", scalar(@{$self->{queue}});
         my $buffer = shift $self->{queue};
         debugf "output plugin %s", ref($self);
-        $self->output($buffer);
+
+        my $callback = sub {
+            my $result = shift;
+            push $self->{queue}, $buffer unless $result;
+            $result;
+        };
+        $self->output($buffer, $callback);
     };
 
     my $timer = UV::timer_init();
     $self->{timer} = $timer;
-    UV::timer_start($timer, $self->{interval}, $self->{interval}, $output_callback);
+    UV::timer_start($timer, $self->{interval}, $self->{interval}, $output_timer_event);
 }
 
 # sub start {
