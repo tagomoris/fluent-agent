@@ -25,20 +25,20 @@ sub configure {
 sub start {
     my ($self) = @_;
 
+    # for fluentd out_forward heartbeating
     my $udp = UV::udp_init();
     UV::udp_bind($udp, '0.0.0.0', $self->{port})
           && croakf 'bind error(UDP): %s', UV::strerror(UV::last_error());
     UV::udp_recv_start($udp, sub {
-        my ($nread, $buf, $sockaddr, $flags) = @_;
-        warnf "udp_recv callback arguments: %s", {buf => $buf, sockaddr => $sockaddr, flags => $flags};
-        ####TODO write...
-        ####TODO bin/fluent-agent -P ping:BJA.local:3 -p 24224 -E
-        ####TODO USE fluentd -c ~/hoge.conf
-        # UV::udp_send($udp, "", 'ip', port, sub{});
+        my ($nread, $buf, $addr, $port, $flag) = @_;
+        return if $nread < 1 or not defined $addr;
+        debugf "udp_recv callback arguments: %s", {nread => $nread, buf => $buf, addr => $addr, port => $port, flag => $flag};
+        UV::udp_send($udp, "pong", $addr, $port, sub{});
     })
         && croakf 'udp recv_start error, port %s: %s', $self->{port}, UV::strerror(UV::last_error());
     $self->{udp_stream} = $udp;
 
+    # tcp data transport
     my $tcp = UV::tcp_init();
     UV::tcp_bind($tcp, '0.0.0.0', $self->{port})
           && croakf 'bind error(TCP): %s', UV::strerror(UV::last_error());
