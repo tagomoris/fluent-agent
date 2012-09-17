@@ -17,11 +17,11 @@ sub new {
         my $data = $args{data};
         if (ref($data) eq 'ARRAY') {
             $self->{type} = 'forward';
-            $self->{data} = [$tag, $data];
+            $self->{data} = [[$tag, $data]];
         }
         else {
             $self->{type} = 'msgpack';
-            $self->{data} = [$tag, $data];
+            $self->{data} = [[$tag, $data]];
         }
         $self->{mark} = 1;
     }
