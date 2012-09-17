@@ -9,6 +9,7 @@ requires 'Data::MessagePack';
 requires 'Data::MessagePack::Stream';
 # requires 'UV';
 
+requires 'List::MoreUtils';
 requires 'Time::Piece';
 requires 'Log::Minimal';
 

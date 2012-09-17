@@ -15,6 +15,8 @@ my $HUPPED = undef;
 $SIG{ HUP } = sub { $HUPPED = 1; }; # reopen/reconnect/refork
 my $TERMINATED = undef;
 $SIG{ INT } = $SIG{ TERM } = sub { $TERMINATED = 1; }; # terminate
+my $PIPED = undef;
+$SIG{ PIPE } = sub { $PIPED = 1; }; # pipe, write failure for broken pipe (connection reset by peer)
 
 my $checker_terminated = sub { $TERMINATED };
 my $checker_reload = sub {
@@ -23,6 +25,13 @@ my $checker_reload = sub {
     } else {
         $HUPPED or $TERMINATED;
     }
+};
+my $checker_pipe = sub {
+    if ($PIPED) {
+        $PIPED = undef;
+        return 1;
+    }
+    undef;
 };
 
 use Fluent::Agent::Options;
@@ -39,7 +48,11 @@ $Log::Minimal::LOG_LEVEL = $LOGLEVEL;
 $Log::Minimal::AUTODUMP = 1;
 $Log::Minimal::PRINT = sub {
     my ( $time, $type, $message, $trace, $raw_message) = @_;
-    print "$time [$type] ($PID) $message at $trace\n";
+    if ( $type eq 'INFO' ) {
+        print "$time [$type] ($PID) $message\n";
+    } else {
+        print "$time [$type] ($PID) $message at $trace\n";
+    }
 };
 $Log::Minimal::DIE = sub {
     my ( $time, $type, $message, $trace, $raw_message) = @_;
@@ -100,6 +113,7 @@ if (defined $opt->{output_file} and defined $opt->{forward_primary}) {
         type => 'forward',
         primary => [map { [split(/:/, $_)] } @{$opt->{forward_primary}}],
         secondary => [map { [split(/:/, $_)] } @{$opt->{forward_secondary} || []}],
+        piped_checker => $checker_pipe,
     };
 } elsif (defined $opt->{stderr}) {
     $output = +{

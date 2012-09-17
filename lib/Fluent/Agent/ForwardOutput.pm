@@ -6,6 +6,7 @@ use Log::Minimal;
 
 use base 'Fluent::Agent::BaseOutput';
 
+use List::MoreUtils;
 use Try::Tiny;
 
 use Data::MessagePack;
@@ -15,6 +16,7 @@ use constant DEFAULT_CONNECT_TIMEOUT => 5; # 5sec
 use constant DEFAULT_WRITE_TIMEOUT => 5; # 5sec
 
 use constant CONNECTION_CHECK_INTERVAL => 5; # 5sec
+
 use constant DEFAULT_CONNECTION_KEEPALIVE => 1800; # 30min
 use constant CONNECTION_KEEPALIVE_MARGIN_MAX => 30; # 30sec
 
@@ -29,26 +31,32 @@ sub configure {
 
     #TODO: set configurable parameters
 
+    $self->{piped} = $args{piped_checker};
+
     $self->{servers} = +{
         primary => $args{primary}, # arrayref of [host, port]
         secondary => $args{secondary}, # arrayref of [host, port] or blank arrayref
     };
-    $self->{mode} = +{ name => 'primary', timeout => 0 };
-    # timeout: with secondary mode, timeout unix_time for mode change into primary
+    $self->{mode} = +{ name => 'normal', timeout => 0 };
+    # mode: 'normal' or 'broken', 'normal' is status that all primary nodes are alive. 'broken' is else.
+    # In 'normal', only primary nodes are used.
+    # In 'broken', all of nodes both of primary and secondary used.
+    # timeout: with broken mode, timeout is unix_time try to change mode into normal
 
     # server means arrayref as [$host, $port]
 
     # server status
     # server => +{ tcp => $socket, host => $host, port => $port, state => $bool(alive/dead), start => unix_time, timeout => unix_time }
     $self->{status} = +{
-        (map { ($_ => { host => $_->[0], port => $_->[1], state => 1 }) } @{$self->primary_servers}, @{self->secondary_servers})
+        (map { ($_ => { host => $_->[0], port => $_->[1], state => 1, standby => 0 }) } $self->primary_servers),
+        (map { ($_ => { host => $_->[0], port => $_->[1], state => 1, standby => 1 }) } $self->secondary_servers)
     };
 
     # flag map now trying to connect (waiting established or timeout)
     $self->{connecting} = +{}; # server => bool
 
     # connection queue
-    $self->{queue} = []; # cyclic queue of [$tcp, $server] used by send_data
+    $self->{connection_queue} = []; # cyclic queue of [$tcp, $server] used by send_data
 
     $self->{timers} = +{};
 
@@ -57,32 +65,110 @@ sub configure {
     $self;
 }
 
-sub primary_servers { (shift)->{servers}->{primary}; }
-sub secondary_servers { (shift)->{servers}->{secondary} };
+sub current_mode {
+    my ($self) = @_;
+    my $time = time();
+    my $is_normal = $self->{mode}->{name} eq 'normal';
+    if ($is_normal) {
+        if ( List::MoreUtils::all { $_->{state} == 1 } grep { $_->{standby} == 0 } values(%{$self->{status}}) ) {
+            ## 1 or more primary servers are alive
+            return 'normal';
+        }
+        # else; mode is now primary, but all of primary nodes are dead
+        $self->{mode}->{name} = 'broken';
+        $self->{mode}->{timeout} = $time + DEFAULT_CONNECTION_KEEPALIVE - 2 * CONNECTION_KEEPALIVE_MARGIN_MAX;
+        return 'broken';
+    }
+    # now broken
+    if ($time < $self->{mode}->{timeout}) {
+        return 'broken';
+    }
+    # now secondary, but already timeouted
+    $self->{mode}->{name} = 'normal'; # try to recovery into 'normal', so set state as alive for all primary servers.
+    $self->{mode}->{timeout} = 0;
+    foreach my $status (values %{$self->{status}}) {
+        next if $status->{standby};
+        $status->{state} = 1;
+    }
+    return 'normal';
+}
 
-sub broken_connection {
+sub primary_servers { @{(shift)->{servers}->{primary}}; }
+sub secondary_servers { @{(shift)->{servers}->{secondary}}; };
+sub all_servers { my $self = shift; return ($self->primary_servers, $self->secondary_servers); }
+
+sub close_connection {
     my ($self, $tcp, $server) = @_;
 
     my $status = $self->{status}->{$server};
     delete $status->{tcp};
     delete $status->{start};
     delete $status->{timeout};
-    $status->{state} = 0;
 
+    debugf "TCP socket status, is_writable %s, is_active %s", UV::is_writable($tcp), UV::is_active($tcp);
     try { UV::close($tcp) } catch { $_; }; # close socket and ignore all errors
+}
+
+sub broken_connection {
+    my ($self, $tcp, $server) = @_;
+
+    warnf "";
+    $self->close_connection($tcp, $server);
+    $self->{status}->{$server}->{state} = 0;
 }
 
 sub maintain_connections {
     my ($self) = @_;
-    # mode check and mode timeout check
-    
+    my @target_nodes;
+    if ($self->current_mode eq 'normal') {
+        @target_nodes = $self->primary_servers;
+    } else {
+        @target_nodes = $self->all_servers;
+    }
 
-    # expired keepalive connection check
+    my $now = time();
+
+    # check and close expired keepalive sockets
+    foreach my $node (keys %{$self->{status}}) {
+        my $status = $self->{status}->{$node};
+        next unless $status->{tcp} and $status->{timeout} and $now > $status->{timeout};
+
+        my $tcp = $status->{tcp};
+        my $queue_size = scalar(@{$self->{connection_queue}});
+
+        my $index = List::MoreUtils::first_index { $_->[0] == $tcp } @{$self->{connection_queue}}; # queue is arrayref of [tcp,server]
+        if ($index >= 0) {
+            splice($self->{connection_queue}, $index, 1);
+            infof "Connection keepalive expired, %s:%s", $status->{host}, $status->{port};
+            $self->close_connection($tcp, $node);
+        }
+    }
+
+    # reconnect for broken connection
+    foreach my $node (@target_nodes) {
+        unless ($self->{status}->{$node}->{tcp}) {
+            $self->connect($node) unless $self->{connecting}->{$node};
+            next;
+        }
+    }
 }
 
 sub connect {
     my ($self, $server) = @_;
     my ($host, $port) = @$server;
+    my $callback = sub {
+        my ($status, $results) = @_;
+        if ($status != 0) {
+            warnf "Cannot resolv host name %s: %s", $host, UV::strerror(UV::last_error);
+            return;
+        }
+        $self->connect_actual($server, $host, $port, $results->[0]);
+    };
+    UV::getaddrinfo($host, $port, $callback, 4); # 'hint == 4' means AF_INET only (without AF_INET6)
+}
+
+sub connect_actual {
+    my ($self, $server, $host, $port, $address) = @_;
 
     my $tcp = UV::tcp_init();
 
@@ -92,16 +178,23 @@ sub connect {
         return if $self->{status}->{$server}->{state};
 
         # not connected yet (and timeout)
-        warnf "failed to connect host %s, port %s", $host, $port;
+        warnf "failed to connect host %s (%s), port %s", $host, $address, $port;
         delete $self->{connecting}->{$server};
         try { UV::close($tcp); } catch { }; # ignore all errors
         $self->{state}->{$server}->{state} = 0;
     };
-
     my $established = sub {
-        debugf "ESTABLISHED arguments %s", \@_;
+        my ($status) = @_;
+        debugf "ForwardOutput connect callback argument (status): %s", $status;
 
         delete $self->{connecting}->{$server};
+        if ($status != 0) {
+            warnf "Failed to connect host %s (%s), port %s: %s", $host, $address, $port, UV::strerror(UV::last_error);
+            $self->{state}->{$server}->{state} = 0;
+            UV::timer_stop($timer);
+            return;
+        }
+
         my $start = scalar(time());
         # timeout: min(DEFAULT_KEEPALIVE - MARGIN_MAX) <- -> max(DEFAULT_KEEPALIVE + MARGIN_MAX)
         my $timeout = $start + DEFAULT_CONNECTION_KEEPALIVE + int(CONNECTION_KEEPALIVE_MARGIN_MAX * ( 2 * rand(1) - 1 ));
@@ -111,38 +204,42 @@ sub connect {
         $status->{state} = 1;
         $status->{start} = $start;
         $status->{timeout} = $timeout;
-        push $self->{queue}, [$tcp, $server];
+        push $self->{connection_queue}, [$tcp, $server];
+        infof "Successfully connected to %s(%s):%s, start: %s, keepalive timeout: %s", $host, $address, $port, $start, $timeout;
     };
-    push $self->{connecting}->{$server} = 1;
-    UV::tcp_connect($tcp, $host, $port, $established);
+    debugf "Connecting server %s (%s), port %s", $host, $address, $port;
+    $self->{connecting}->{$server} = 1;
+    UV::tcp_connect($tcp, $address, $port, $established);
     UV::timer_start($timer, (DEFAULT_CONNECT_TIMEOUT * 1000), 0, $timeout_callback);
 }
 
 sub send_data {
     my ($self, $msg, $callback) = @_;
 
-    my $pair = shift $self->{queue};
+    debugf "ForwardOutput connection queue: %s", $self->{connection_queue};
+    my $pair = shift $self->{connection_queue};
     return $callback->(0) unless $pair; # no one connection established (yet?), or all connections are in busy
 
     my ($tcp, $server) = @$pair;
 
     my $written = 0;
+    my $piped = 0;
     my $timeout = 0;
 
     my $timer = UV::timer_init();
     my $timeout_callback = sub {
-        return if $written; # successfully sent already.
+        return if $written or $piped; # successfully sent, or failed by SIGPIPE already.
         warnf "Failed to send message, timeout, to host %s, port %s", @$server, UV::strerror(UV::last_error());
         $timeout = 1;
         if ($tcp) { # UV::write() not failed yet
             $self->broken_connection($tcp, $server);
             $callback->(0);
         }
-    }
+    };
     my $write_callback = sub {
         my ($status) = @_;
-        if ($status) { # failed to write
-            return 0 if $timeout; # already failed in this fluent-agent by write timeout
+        if ($status != 0) { # failed to write
+            return if $timeout or $piped; # already failed in this fluent-agent by write timeout or SIGPIPE
 
             warnf "Failed to send message to host %s, port %s, message: %s", @$server, UV::strerror(UV::last_error());
             $self->broken_connection($tcp, $server);
@@ -151,31 +248,43 @@ sub send_data {
         if ($timeout) {
             #TODO mmm.... actually sended?
             warnf "Timeout detected for host %s, port %s", @$server;
-            return 0;
+            return;
         }
 
         # successfully sent
-        push $self->connection_queue, $tcp;
+        $written = 1;
+        push $self->{connection_queue}, [$tcp, $server];
         $callback->(1);
     };
-    UV::write($tcp, $msg, $write_callback)
-    UV::timer_start($timer, DEFAULT_WRITE_TIMEOUT, 0, $timeout_callback)
+    UV::write($tcp, $msg, $write_callback);
+    if ($self->{piped}->()) {
+        warnf "ForwardOutput connection reset by peer, host %s:%s", @$server;
+        $self->broken_connection($tcp, $server);
+        $piped = 1;
+        return $callback->(0);
+    }
+    UV::timer_start($timer, (DEFAULT_WRITE_TIMEOUT * 1000), 0, $timeout_callback);
 }
 
 sub start {
     my ($self) = @_;
 
     my $timer = UV::timer_init();
-    UV::timer_start($timer, CONNECTION_CHECK_INTERVAL, CONNECTION_CHECK_INTERVAL, sub { $self->maintain_connections; });
+    # connect to servers after startup, as early as possible
+    UV::timer_start($timer, 1, (CONNECTION_CHECK_INTERVAL * 1000), sub { $self->maintain_connections; });
     $self->{timers}->{connection_maintainer} = $timer;
 }
 
 sub output {
     my ($self, $buffer, $callback) = @_;
-    if (scalar(@{$self->connection_queue}) < 1) { # no one connection established (yet?), or all connections are in busy
+    if (scalar(@{$self->{connection_queue}}) < 1) { # no one connection established (yet?), or all connections are in busy
         return $callback->(0);
     }
-    my $msg = Data::MessagePack->pack($buffer->data);
+    debugf "ForwardOutput to write data %s", $buffer->data;
+    my $msg = '';
+    foreach my $data (@{$buffer->data}) {
+        $msg .= Data::MessagePack->pack($data);
+    }
     $self->send_data($msg, $callback);
 }
 
@@ -183,6 +292,7 @@ sub shutdown {
     my ($self) = @_;
     foreach my $key (keys %{$self->{timers}}) {
         UV::timer_stop($self->{timers}->{$key});
+        delete $self->{timers}->{$key};
     }
 }
 
