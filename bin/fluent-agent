@@ -48,7 +48,7 @@ $Log::Minimal::LOG_LEVEL = $LOGLEVEL;
 $Log::Minimal::AUTODUMP = 1;
 $Log::Minimal::PRINT = sub {
     my ( $time, $type, $message, $trace, $raw_message) = @_;
-    if ( $type eq 'INFO' ) {
+    if ( $type eq 'INFO' or $type eq 'WARN' ) {
         print "$time [$type] ($PID) $message\n";
     } else {
         print "$time [$type] ($PID) $message at $trace\n";
