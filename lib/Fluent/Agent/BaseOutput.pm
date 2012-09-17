@@ -35,9 +35,9 @@ sub init {
 
     my $output_timer_event = sub {
         return if scalar(@{$self->{queue}}) < 1;
-        debugf "output queue size %s, to output", scalar(@{$self->{queue}});
+        # debugf "output queue size %s, to output", scalar(@{$self->{queue}});
         my $buffer = shift $self->{queue};
-        debugf "output plugin %s", ref($self);
+        # debugf "output plugin %s", ref($self);
 
         my $callback = sub {
             my $result = shift;
