@@ -15,7 +15,7 @@ use constant DEFAULT_CONNECT_TIMEOUT => 5; # 5sec
 
 use constant DEFAULT_WRITE_TIMEOUT => 5; # 5sec
 
-use constant CONNECTION_CHECK_INTERVAL => 5; # 5sec
+use constant CONNECTION_CHECK_INTERVAL => 15; # 15sec
 
 use constant DEFAULT_CONNECTION_KEEPALIVE => 1800; # 30min
 use constant CONNECTION_KEEPALIVE_MARGIN_MAX => 30; # 30sec
@@ -37,7 +37,7 @@ sub configure {
         primary => $args{primary}, # arrayref of [host, port]
         secondary => $args{secondary}, # arrayref of [host, port] or blank arrayref
     };
-    $self->{mode} = +{ name => 'normal', timeout => 0 };
+    $self->{mode} = 'normal';
     # mode: 'normal' or 'broken', 'normal' is status that all primary nodes are alive. 'broken' is else.
     # In 'normal', only primary nodes are used.
     # In 'broken', all of nodes both of primary and secondary used.
@@ -68,29 +68,26 @@ sub configure {
 sub current_mode {
     my ($self) = @_;
     my $time = time();
-    my $is_normal = $self->{mode}->{name} eq 'normal';
+    my $is_normal = $self->{mode} eq 'normal';
     if ($is_normal) {
         if ( List::MoreUtils::all { $_->{state} == 1 } grep { $_->{standby} == 0 } values(%{$self->{status}}) ) {
             ## 1 or more primary servers are alive
             return 'normal';
         }
         # else; mode is now primary, but all of primary nodes are dead
-        $self->{mode}->{name} = 'broken';
-        $self->{mode}->{timeout} = $time + DEFAULT_CONNECTION_KEEPALIVE - 2 * CONNECTION_KEEPALIVE_MARGIN_MAX;
+        warnf "One or more servers are down, mode changed into 'broken'";
+        $self->{mode} = 'broken';
         return 'broken';
     }
     # now broken
-    if ($time < $self->{mode}->{timeout}) {
-        return 'broken';
+    # if all primary nodes are backed to alive, turned into 'normal'
+    if ( List::MoreUtils::all { $_->{state} == 1 } grep { $_->{standby} == 0 } values(%{$self->{status}}) ) {
+        warnf "All of primary nodes are alive back, mode changed into 'normal'";
+        $self->{mode} = 'normal';
+        return 'normal';
     }
-    # now secondary, but already timeouted
-    $self->{mode}->{name} = 'normal'; # try to recovery into 'normal', so set state as alive for all primary servers.
-    $self->{mode}->{timeout} = 0;
-    foreach my $status (values %{$self->{status}}) {
-        next if $status->{standby};
-        $status->{state} = 1;
-    }
-    return 'normal';
+
+    return 'broken';
 }
 
 sub primary_servers { @{(shift)->{servers}->{primary}}; }
@@ -112,7 +109,6 @@ sub close_connection {
 sub broken_connection {
     my ($self, $tcp, $server) = @_;
 
-    warnf "";
     $self->close_connection($tcp, $server);
     $self->{status}->{$server}->{state} = 0;
 }
@@ -190,7 +186,7 @@ sub connect_actual {
         delete $self->{connecting}->{$server};
         if ($status != 0) {
             warnf "Failed to connect host %s (%s), port %s: %s", $host, $address, $port, UV::strerror(UV::last_error);
-            $self->{state}->{$server}->{state} = 0;
+            $self->{status}->{$server}->{state} = 0;
             UV::timer_stop($timer);
             return;
         }
@@ -205,7 +201,7 @@ sub connect_actual {
         $status->{start} = $start;
         $status->{timeout} = $timeout;
         push $self->{connection_queue}, [$tcp, $server];
-        infof "Successfully connected to %s(%s):%s, start: %s, keepalive timeout: %s", $host, $address, $port, $start, $timeout;
+        infof "Successfully connected to %s(%s):%s, keepalive timeout: %s", $host, $address, $port, scalar(localtime($timeout));
     };
     debugf "Connecting server %s (%s), port %s", $host, $address, $port;
     $self->{connecting}->{$server} = 1;
