@@ -1,6 +1,8 @@
 package Fluent::Agent::Buffer;
 
 use 5.014;
+use warnings;
+use English;
 use Log::Minimal;
 use Time::HiRes qw//;
 

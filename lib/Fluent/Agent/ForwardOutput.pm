@@ -1,6 +1,7 @@
 package Fluent::Agent::ForwardOutput;
 
 use 5.014;
+use warnings;
 use English;
 use Log::Minimal;
 
@@ -10,6 +11,8 @@ use List::MoreUtils;
 use Try::Tiny;
 
 use Data::MessagePack;
+
+use UV;
 
 use constant DEFAULT_CONNECT_TIMEOUT => 5; # 5sec
 
@@ -174,11 +177,11 @@ sub connect_actual {
         $self->{state}->{$server}->{state} = 0;
     };
     my $established = sub {
-        my ($status) = @_;
-        debugf "ForwardOutput connect callback argument (status): %s", $status;
+        my ($result) = @_;
+        debugf "ForwardOutput connect callback argument (result): %s", $result;
 
         delete $self->{connecting}->{$server};
-        if ($status != 0) {
+        if ($result != 0) {
             warnf "Failed to connect host %s (%s), port %s: %s", $host, $address, $port, UV::strerror(UV::last_error);
             $self->{status}->{$server}->{state} = 0;
             UV::timer_stop($timer);

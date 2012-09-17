@@ -1,12 +1,15 @@
 package Fluent::Agent::ForwardInput;
 
 use 5.014;
+use warnings;
 use English;
 use Log::Minimal;
 
 use Try::Tiny;
 use Time::Piece;
 use Data::MessagePack;
+
+use UV;
 
 use base 'Fluent::Agent::BaseInput';
 

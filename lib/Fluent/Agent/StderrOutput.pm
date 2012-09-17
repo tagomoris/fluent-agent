@@ -1,6 +1,7 @@
 package Fluent::Agent::StderrOutput;
 
 use 5.014;
+use warnings;
 use English;
 use Log::Minimal;
 

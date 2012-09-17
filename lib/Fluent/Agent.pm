@@ -1,6 +1,8 @@
 package Fluent::Agent v0.0.1;
 
 use 5.014;
+use warnings;
+use English;
 use Log::Minimal;
 
 use Time::Piece;

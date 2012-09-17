@@ -1,6 +1,12 @@
 package Fluent::Agent::Options v0.0.1;
 
+use 5.014;
+use warnings;
+use English;
+
 sub parse {
+    #TODO: Getopt::Std breaks --long-type-options, so we MUST change parser module...
+
     # Getopt::Long see single char option as first char of long option, not alias option
     # So we should parse all of single char options by Getopt::Std, and later, parse long options by Getopt::Long
     use Getopt::Std;
