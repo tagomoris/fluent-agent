@@ -20,10 +20,6 @@ use constant CONNECTION_CHECK_INTERVAL => 15; # 15sec
 use constant DEFAULT_CONNECTION_KEEPALIVE => 1800; # 30min
 use constant CONNECTION_KEEPALIVE_MARGIN_MAX => 30; # 30sec
 
-# use constant RECONNECT_WAIT_INCR_RATE => 1.5;
-# use constant RECONNECT_WAIT_MAX => 1800;
-
-#TODO: TCP connection keepalive management
 #TODO: Retry wait for bufferes
 
 sub configure {
@@ -60,8 +56,6 @@ sub configure {
 
     $self->{timers} = +{};
 
-    # TODO Is this needed?
-    # $self->{onetime_timers} = []; # onetime timers (non permanent, deleted immediately after timeout watching, and so on)
     $self;
 }
 
@@ -242,7 +236,7 @@ sub send_data {
             $callback->(0);
         }
         if ($timeout) {
-            #TODO mmm.... actually sended?
+            #TODO: mmm.... actually sended?
             warnf "Timeout detected for host %s, port %s", @$server;
             return;
         }
