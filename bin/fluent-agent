@@ -35,9 +35,18 @@ my $checker_pipe = sub {
     undef;
 };
 
-use Fluent::Agent::Options;
-my $opt = Fluent::Agent::Options->parse();
-
+my $opt = {};
+use Getopt::Long qw(:config posix_default no_ignore_case gnu_compat);
+GetOptions($opt,
+           qw(
+                 help|h daemonize|d log|L=s verbose|v quiet|q
+                 input-file|i=s input-pattern|I=s tag|t=s tag-field|T=s time-format|w=s time-field|W=s
+                 input-port|p=i
+                 output-file|o=s
+                 forward-primary|f=s@ forward-secondary|s=s@
+                 stderr|E
+                 ping|P=s
+         )); #TODO filter options
 use Pod::Usage;
 pod2usage(1) if $opt->{help};
 if ($opt->{quiet}) {   $LOGLEVEL = 'WARN'; }
