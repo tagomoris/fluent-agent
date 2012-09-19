@@ -46,7 +46,17 @@ GetOptions($opt,
                  forward-primary|f=s@ forward-secondary|s=s@
                  stderr|E
                  ping|P=s
-         )); #TODO filter options
+                 command|x=s x-children|X=i x-respawn
+                 x-in-json x-out-json x-json
+                 x-in-msgpack x-out-msgpack x-msgpack
+                 x-in-tsv-keys=s x-out-tsv-keys=s
+                 x-in-time-field=s  x-out-time-field=s  x-time-field=s
+                 x-in-time-format=s x-out-time-format=s x-time-format=s
+                 x-in-tag-field=s  x-out-tag-field=s  x-tag-field=s
+                 x-out-tag-string=s
+                 x-in-remove-prefix=s x-in-add-prefix=s x-out-remove-prefix=s x-out-add-prefix=s
+                 x-remove-prefix=s x-add-prefix=s
+         ));
 use Pod::Usage;
 pod2usage(1) if $opt->{help};
 if ($opt->{quiet}) {   $LOGLEVEL = 'WARN'; }
@@ -134,8 +144,52 @@ if (defined $opt->{output_file} and defined $opt->{forward_primary}) {
 }
 debugf "Configured output: %s", $output;
 
-### TODO Filter options
 my $filter = undef;
+if (defined $opt->{command}) {
+    my ( @in_format, @out_format );
+    if ($opt->{'x-json'}) { push @in_format, +{ type => 'json' }; push @out_format, +{ type => 'json' }; }
+    if ($opt->{'x-in-json'}) { push @in_format, +{ type => 'json' }; }
+    if ($opt->{'x-out-json'}) { push @out_format, +{ type => 'json' }; }
+    if ($opt->{'x-msgpack'}) { push @in_format, +{ type => 'msgpack' }; push @out_format, +{ type => 'msgpack' }; }
+    if ($opt->{'x-in-msgpack'}) { push @in_format, +{ type => 'msgpack' }; }
+    if ($opt->{'x-out-msgpack'}) { push @out_format, +{ type => 'msgpack' }; }
+    if ($opt->{'x-in-tsv-keys'}) { push @in_format, +{ type => 'tsv', fields => [split(/,/, $opt->{'x-in-tsv-keys'})]}; }
+    if ($opt->{'x-out-tsv-keys'}) { push @out_format, +{ type => 'tsv', fields => [split(/,/, $opt->{'x-out-tsv-keys'})]}; }
+    if (scalar(@in_format) < 1) { push @in_format, +{ type => 'json' }; };
+    if (scalar(@out_format) < 1) { push @out_format, +{ type => 'json' }; };
+    croakf "Too many in/out data format specified" if scalar(@in_format) > 1 or scalar(@out_format) > 1;
+    $filter = +{
+        type => 'exec',
+        command => $opt->{command},
+        children => $opt->{'x-children'} || 1,
+        respawn => $opt->{'x-respawn'} || 0,
+        in => +{
+            format => $in_format[0], # { type => TYPENAME, ( fields => [FIELDS] ) }
+            time => +{
+                field => ($opt->{'x-in-time-field'} || $opt->{'x-time-field'} || 'time'),
+                format => ($opt->{'x-in-time-format'} || $opt->{'x-time-format'} || '%s'),
+            },
+            tag => +{
+                field => ($opt->{'x-in-tag-field'} || $opt->{'x-tag-field'} || 'tag'),
+                remove_prefix => ($opt->{'x-in-remove-prefix'} || $opt->{'x-remove-prefix'} || ''),
+                add_prefix => ($opt->{'x-in-add-prefix'} || ''),
+            },
+        },
+        out => +{
+            format => $out_format[0], # { type => TYPENAME, ( fields => [FIELDS] ) }
+            time => +{
+                field => ($opt->{'x-out-time-field'} || $opt->{'x-time-field'} || 'time'),
+                format => ($opt->{'x-out-time-format'} || $opt->{'x-time-format'} || '%s'),
+            },
+            tag => +{
+                field => ($opt->{'x-out-tag-field'} || $opt->{'x-tag-field'} || 'tag'),
+                string => ($opt->{'x-out-tag-string'} || 'missing'),
+                remove_prefix => ($opt->{'x-out-remove-prefix'} || ''),
+                add_prefix => ($opt->{'x-out-add-prefix'} || $opt->{'x-add-prefix'} || ''),
+            },
+        },
+    };
+}
 debugf "Configured filter: %s", ($filter || 'undefined');
 
 ### Ping options
@@ -215,6 +269,15 @@ fluent-agent [options]
 
     B<-p PORT>     read messages from I<PORT> (compatible with fluentd's forward input)
 
+    B<--input-file>    Equivalent to B<-i>
+    B<--input-pattern> Equivalent to B<-I>
+    B<--tag>           Equivalent to B<-t>
+    B<--tag-field>     Equivalent to B<-T>
+    B<--time-format>   Equivalent to B<-w>
+    B<--time-field>    Equivalent to B<-W>
+
+    B<--input-port>    Equivalent to B<-p>
+
   Output Options:
 
     B<-o FILEPATH>  Write messages to I<FILEPATH> with TAB separated time, tag and JSON of message
@@ -225,7 +288,72 @@ fluent-agent [options]
 
     B<-E>           Write messages to stderr (for debug)
 
-  OMIT FILTER HELP...
+    B<--output-file>       Equivalent to B<-o>
+    B<--forward-primary>   Equivalent to B<-f>
+    B<--forward-secondary> Equivalent to B<-s>
+    B<--stderr>            Equivalent to B<-E>
+
+  Filter Options:
+
+    B<-x COMMAND>        Filter message between input and output, with executed I<COMMAND>'s STDIN and STDOUT
+                           (equivalent with Fluentd's out_exec_filter)
+    B<--command COMMAND> Equivalent to B<-x>
+
+    B<-X NUM>       Number of filter child processes (number of forks)
+    B<--x-children> Equivalent to B<-X>
+
+    B<--x-respawn>  Respawn childs which unexpectedly died (default: main process also dies)
+
+    B<--x-in-json>  Serialize messages as JSON on STDIN of filter (Default)
+    B<--x-out-json> Deserialize messages as JSON on STDOUT of filter (Default)
+    B<--x-json>     Equivalent to B<--x-in-json> and B<--x-out-json>
+
+    B<--x-in-msgpack>  Serialize messages as MessagePack on STDIN of filter (Default)
+    B<--x-out-msgpack> Deserialize messages as MessagePack on STDOUT of filter (Default)
+    B<--x-msgpack>     Equivalent to B<--x-in-msgpack> and B<--x-out-msgpack>
+
+    B<--x-in-tsv-keys KEYS>
+                    Serialize messages with TSV on STDIN of filter, with fields named by I<KEYS> (comma separated)
+    B<--x-out-tsv-keys KEYS>
+                    Deserialize messages with TSV on STDOUT of filter, with fields named by I<KEYS> (comma separated)
+
+    B<--x-in-time-field FIELDNAME>
+                    Serialize messages with time field named as I<FIELDNAME> (default: time)
+    B<--x-out-time-field FIELDNAME>
+                    Deerialize messages with time field named as I<FIELDNAME> (defualt: time)
+    B<--x-time-field FIELDNAME>
+                    Same as B<--x-in-time-field> and B<--x-out-time-field>
+
+    B<--x-in-time-format FORMAT>
+                    Format used in serialization (for in-time-format) (default: unix time integer (%s))
+    B<--x-out-time-format FORMAT>
+                    Format used in deserialization (for out-time-format) (default: unix time integer (%s))
+    B<--x-time-format FORMAT>
+                    Same as B<--x-in-time-format> and B<--x-out-time-field>
+
+    B<--x-in-tag-field FIELDNAME>
+                    Serialize messages with tag field named as I<FIELDNAME> (default: tag)
+    B<--x-out-tag-field FIELDNAME>
+                    Deserialize messages with tag field named as I<FIELDNAME> (default: tag)
+    B<--x-tag-field FIELDNAME>
+                    Same as B<--x-in-tag-field> and B<--x-out-tag-field>
+
+    B<--x-out-tag-string STRING>
+                    Specify tag as STRING of output records without 'x-out-tag-field' field (default: missing)
+
+    B<--x-in-remove-prefix TAG_PREFIX>
+                    Remove tag prefix before serialization for filter's STDIN
+    B<--x-in-add-prefix TAG_PREFIX>
+                    Add tag prefix before serialization for filter's STDIN
+    B<--x-out-remove-prefix TAG_PREFIX>
+                    Remove tag prefix after deserialization for filter's STDOUT
+    B<--x-out-add-prefix TAG_PREFIX>
+                    Add tag prefix after deserialization for filter's STDOUT
+
+    B<--x-remove-prefix TAG_PREFIX>
+                    Remove tag prefix before serialization for filter's STDIN
+    B<--x-add-prefix TAG_PREFIX>
+                    Add tag prefix after deserialization for filter's STDOUT
 
 =head1 OPTIONS
 
@@ -243,53 +371,3 @@ B<This program> will read the given input file(s) and do something
 useful with the contents thereof.
 
 =cut
-
-__DATA__
-    B<--input-file>    Equivalent to B<-i>
-    B<--input-pattern> Equivalent to B<-I>
-    B<--tag>           Equivalent to B<-t>
-    B<--tag-field>     Equivalent to B<-T>
-    B<--time-format>   Equivalent to B<-w>
-    B<--time-field>    Equivalent to B<-W>
-
-    B<--input-port>    Equivalent to B<-p>
-
-    B<--output-file>       Equivalent to B<-o>
-    B<--forward-primary>   Equivalent to B<-f>
-    B<--forward-secondary> Equivalent to B<-s>
-    B<--stderr>            Equivalent to B<-E>
-
-  Filter Options:
-
-    B<-x COMMAND>   Filter message between input and output, with executed I<COMMAND>'s STDIN and STDOUT
-                      (equivalent with Fluentd's out_exec_filter)
-    B<-X NUM>       Number of filter child processes (number of forks)
-    B<--x-respawn>  Respawn childs which unexpectedly died (default: main process also dies)
-
-    B<--x-json>     (Default) Serialize/Deserialize messages with JSON
-                             (with attributes 'time' and 'tag') on STDIN/STDOUT of filter
-    B<--x-msgpack>  Serialize/Deserialize messages with MessagePack
-
-    B<--x-tsv-in KEYS>
-                    Serialize messages with TSV on STDIN of filter, fields named by I<KEYS>
-    B<--x-tsv-out KEYS>
-                    Deserialize messages with TSV on STDOUT of filter, fields named by I<KEYS>
-
-    B<--x-in-time-field FIELDNAME>
-                    Serialize messages with time field named as I<FIELDNAME>
-    B<--x-out-time-field FIELDNAME>
-                    Deerialize messages with time field named as I<FIELDNAME>
-    B<--x-time-field FIELDNAME>
-                    Same as B<--x-in-time-field FIELDNAME --x-out-time-field FIELDNAME>
-
-    B<--x-tag-field FIELDNAME>
-                    Serialize messages with tag field named as I<FIELDNAME>
-    B<--x-in-tag-field FIELDNAME>
-                    Deserialize messages with tag field named as I<FIELDNAME>
-    B<--x-out-tag-field FIELDNAME>
-                    Same as B<--x-in-tag-field FIELDNAME --x-out-tag-field FIELDNAME>
-
-    B<--x-remove-prefix TAG_PREFIX>
-                    Remove tag prefix before serialization for filter's STDIN
-    B<--x-add-prefix TAG_PREFIX>
-                    Add tag prefix after deserialization for filter's STDOUT
