@@ -6,6 +6,7 @@ use English;
 use Log::Minimal;
 
 use Try::Tiny;
+use List::MoreUtils;
 
 use Encode qw( encode_utf8 decode_utf8 );
 use POSIX;
@@ -14,21 +15,17 @@ use JSON::XS;
 use Data::MessagePack;
 
 use UV;
+use IO::Handle;
 use IO::Socket::UNIX;
 
-use Fluent::Agent::Buffer;
+use base 'Fluent::Agent::BaseFilter';
+use Fluent::Agent::IOUtil;
+
+use constant DEFAULT_CHILDREN_WATCHDOG => 15;
 
 use constant DEFAULT_BACKLOG => 100;
 
-sub new {
-    my ($this, %args) = @_;
-    my $self = +{};
-    bless $self, $this;
-
-    $self->configure(%args) if $self->can('configure');
-
-    return $self;
-}
+use constant DEFAULT_WRITE_TIMEOUT => 5;
 
 sub configure {
     my ($self, %args) = @_;
@@ -37,6 +34,7 @@ sub configure {
         command => $args{command},
         children => $args{children},
         respawn => $args{respawn},
+        piped => $args{piped_checker},
     };
 
     # $self->{serializer}
@@ -114,34 +112,59 @@ sub configure {
     $self;
 }
 
-sub init {
-    my ($self, $read_queue, $write_queue) = @_;
+sub command {
+    my ($self) = @_;
+    $self->{conf}->{command};
+}
 
-    infof "Starting Input plugin: %s", ref($self);
-    $self->start() if $self->can('start');
+sub child_pid {
+    my ($self, $sock) = @_;
+    ($self->{proc}->{children}->{$sock} || {})->{pid};
 }
 
 sub start {
     my ($self) = @_;
+
     my $children = {};
     my $queue = [];
+    my $cb = sub {
+        my ($pid, $connected_sock, $socket_name) = @_;
+        unless (defined $connected_sock and defined $socket_name) {
+            if (defined $connected_sock) { try { UV::close($connected_sock); } catch { }; } # ignore error
+            if (defined $socket_name) { unlink($socket_name); } # ignore error
+            return;
+        }
+        $children->{$connected_sock} = +{ pid => $pid, sock => $connected_sock, sock_name => $socket_name };
+        push $queue, $connected_sock;
+    };
     my $i;
     for( $i = 0 ; $i < $self->{conf}->{children} ; $i++ ) {
-        my $cb = sub {
-            my ($pid, $connected_sock) = @_;
-            $children->{$pid} = +{ pid => $pid, sock => $connected_sock };
-            push $queue, $connected_sock;
-        };
         $self->start_pair($i, $cb);
     }
-    $self->{sock_seq} = $i;
-    $self->{children} = $children;
-    $self->{queue} = $queue;
+    $self->{proc} = +{
+        sock_seq => $i,
+        children => $children, # $sock => +{ pid => NUM, sock => $sock, sock_name => $sock_path }
+        queue => $queue, # arrayref of $sock
+    };
 
-    #TODO read buffer watcher (and to write data into $sockets)
-    #TODO child process/sockets number watcher to respawn (starts after timeout to wait child process' connect)
+    if ($self->{conf}->{respawn}) {
+        my $timer = UV::timer_init();
+        $self->{proc}->{watcher} = $timer;
+        UV::timer_start($timer, DEFAULT_CHILDREN_WATCHDOG, DEFAULT_CHILDREN_WATCHDOG, sub { $self->repair_child($cb); });
+    }
 
     $self;
+}
+
+sub repair_child {
+    my ($self, $cb) = @_;
+    my $children_num = scalar(values %{$self->{proc}->{children}});
+    return if $children_num == $self->{conf}->{children};
+
+    my $repairs = $self->{conf}->{children} - $children_num;
+    for ( my $i = 0 ; $i < $repairs ; $i++ ) {
+        $self->start_pair($self->{proc}->{sock_seq}++, $cb);
+    }
 }
 
 sub start_pair {
@@ -181,7 +204,7 @@ sub start_child {
 
 sub start_parent {
     my ($self, $socket_name, $pid, $callback) = @_;
-    #     in parent, UV::listen and accept and read_start
+    # in parent, UV::listen and accept and read_start
 
     my $pipe = UV::pipe_init(0); # ipc(bool) 0: flag that specify not to pass filehandles over pipe
     UV::pipe_bind($pipe, $socket_name)
@@ -192,7 +215,7 @@ sub start_parent {
         my $r = UV::accept($pipe, $client_sock);
         if ($r) {
             warnf "Failed to accept about %s: %s", $socket_name, UV::strerror(UV::last_error);
-            return $callback->($pid, undef);
+            return $callback->($pid, undef, undef);
         }
         debugf "Successfully accepted %s", $socket_name;
         my $read_callback = sub {
@@ -203,11 +226,11 @@ sub start_parent {
             if ($nread < 0) { # I/O error
                 my $err = UV::last_error();
                 if ($err == UV::EOF) {
-                    warnf "Connection reset by peer: maybe child process %s crashed.", $pid;
+                    warnf "ExecFilter Connection reset by peer: maybe child process %s crashed.", $pid;
                 } else {
-                    warnf "Read I/O Error from pid(%s) %s: %s", $pid, $socket_name, $err;
+                    warnf "ExecFilter Read I/O Error from pid(%s) %s: %s", $pid, $socket_name, $err;
                 }
-                $self->cleanup_child($pid, $client_sock);
+                $self->cleanup_child($client_sock);
                 return;
             }
 
@@ -215,62 +238,93 @@ sub start_parent {
         };
         UV::read_start($client_sock, $read_callback);
 
-        $callback->($pid, $client_sock);
+        $callback->($pid, $client_sock, $socket_name);
     };
 }
 
 sub cleanup_child {
-    my ($self, $pid, $sock) = @_;
-    #TODO kill child, close socket
+    my ($self, $sock_key) = @_;
+
+    my $child = delete $self->{proc}->{children}->{$sock_key};
+    return unless $child;
+
+    infof "To terminate child process of ExecFilter...";
+
+    my $sock = $child->{sock};
+    my $index = List::MoreUtils::first_index { $_ == $sock } @{$self->{proc}->{queue}}; # queue is arrayref of [tcp,server]
+    if ($index >= 0) {
+        splice($self->{proc}->{queue}, $index, 1);
+    }
+
+    try { kill(TERM => $child->{pid}) } catch {
+        warnf "Sending SIGTERM to pid %s, error:%s", $child->{pid}, $_;
+    };
+    try { UV::close($child->{sock}); } catch { }; # ignore all errors
+
+    #TODO without UNIX domain socket?
+    unlink($child->{sock_name})
+        or warnf "Failed to unlink socket path %s: %s", $child->{sock_name}, $!;
+    $self;
+}
+
+sub write_data {
+    my ($self, $msg, $callback) = @_;
+
+    my $sock = shift $self->{proc}->{queue};
+    return callback->(0) unless $sock; # no one child process running (yet?), or all are in busy
+
+    my $child_pid = $self->child_pid($sock);
+    debugf "ExecFilter to write data to child (pid %s)", $child_pid;
+
+    my $cb = sub {
+        my ($result) = @_;
+        if ($result) {
+            push $self->{proc}->{queue}, $sock;
+            return $callback->(1);
+        }
+        # fail
+        $self->cleanup_child($sock);
+        $callback->(0);
+    };
+    Fluent::Agent::IOUtil->write($child_pid, $sock, $msg, $self->{piped}, $cb);
 }
 
 sub filter_input { # from read buffer
     my ($self, $buffer, $callback) = @_;
-    if (scalar(@{$self->{connection_queue}}) < 1) { # no one connection established (yet?), or all connections are in busy
-        return $callback->(0);
-    }
-    debugf "ForwardOutput to write data %s", $buffer->data;
-    my $msg = '';
-    foreach my $data (@{$buffer->data}) {
-        $msg .= Data::MessagePack->pack($data);
-    }
-    $self->send_data($msg, $callback); # write to exec child's input
-}
 
-# buffer for write queue
-sub buffer {
-    my ($self) = @_;
-    my $queue = $self->{queue};
-    my $buffer;
-    foreach my $b (@$queue) {
-        next if $b->marked();
-        if ($b->check()) {
-            $b->mark();
-            next;
-        }
-        $buffer = $b;
-        last;
+    my $msg = '';
+    my $r;
+    while ($r = $buffer->next_record) {
+        $msg .= $self->{serializer}->(@$r);
+        $msg .= "\n";
     }
-    unless ($buffer) {
-        $buffer = Fluent::Agent::Buffer->new();
-        push $queue, $buffer;
-    }
-    $buffer;
+    $self->write_data($msg, $callback);
 }
 
 sub filter_output { # read callback from exec child's output, and emit buffer into write queue
+    my ($self, $nread, $buf) = @_;
+    my @records;
+
+    my $pos = 0;
+    my $term;
+    while($pos <= $nread and ($term = index($buf, "\n", $pos)) >= 0) {
+        my $line = substr($buf, $pos, ($term - $pos));
+
+        push @records, [$self->{deserializer}->($line)];
+        $pos = $term + 1;
+    }
+    $self->emits(@records);
 }
 
 sub shutdown {
     my ($self) = @_;
-    # close sockets
-    # kill children
-    # delete all socket files
-    UV::udp_recv_stop($self->{udp_stream});
-    foreach my $client_key (keys %{$self->{open_sockets}}) {
-        UV::close($self->{open_sockets}->{$client_key}->{client});
+
+    UV::timer_stop($self->{proc}->{watcher});
+
+    foreach my $child (values %{$self->{proc}->{children}}) {
+        $self->cleanup_child($child->{sock});
     }
-    UV::close($self->{tcp_stream});
+    $self;
 }
 
 1;

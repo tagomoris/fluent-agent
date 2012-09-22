@@ -39,7 +39,7 @@ sub init {
         return unless defined $buf;
         my $callback = sub {
             my $result = shift;
-            push $self->{__queues}->{read}, $buffer unless $result;
+            push $self->{__queues}->{read}, $buf unless $result;
             $result;
         };
         $self->filter_input($buf, $callback);
