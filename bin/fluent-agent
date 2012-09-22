@@ -90,11 +90,12 @@ if (defined $opt->{logpath}) {
 
 ### Input options
 my $input = undef;
-if (defined $opt->{input_file} and defined $opt->{input_port}) {
+if (defined $opt->{'input-file'} and defined $opt->{'input-port'}) {
     croakf "Cannot specify both of INPUT_FILE(-i) and INPUT_PORT(-p)";
-} elsif (defined $opt->{input_file}) {
+} elsif (defined $opt->{'input-file'}) {
     my ($input_file, $input_pattern, $tag_string, $tag_field, $time_format, $time_field) = (
-        $opt->{input_file}, $opt->{input_pattern}, $opt->{tag_string}, $opt->{tag_field}, $opt->{time_format}, $opt->{time_field},
+        $opt->{'input-file'}, $opt->{'input-pattern'}, $opt->{'tag-string'}, $opt->{'tag-field'},
+        $opt->{'time-format'}, $opt->{'time-field'},
     );
     croakf("Cannot find specified file readable: %s", $input_file) unless -f $input_file and -r $input_file;
     croakf("INPUT_PATTERN(-I) MUST be specified with INPUT_FILE(-i) option") unless defined $input_pattern;
@@ -110,8 +111,8 @@ if (defined $opt->{input_file} and defined $opt->{input_port}) {
         time_format => $time_format,
         time_field => ($time_field || 'time'),
     };
-} elsif (defined $opt->{input_port}) {
-    $input = +{ type => 'forward', port => $opt->{input_port} };
+} elsif (defined $opt->{'input-port'}) {
+    $input = +{ type => 'forward', port => $opt->{'input-port'} };
 } else {
     croakf "No one input options specified";
 }
@@ -119,20 +120,20 @@ debugf "Configured input: %s", $input;
 
 ### Output options
 my $output = undef;
-if (defined $opt->{output_file} and defined $opt->{forward_primary}) {
+if (defined $opt->{'output-file'} and defined $opt->{'forward-primary'}) {
     croakf "Cannot specify both of OUTPUT_FILE(-o) and FORWARD_PRIMARY(-f)";
-} elsif (defined $opt->{output_file}) {
+} elsif (defined $opt->{'output-file'}) {
     # With time specifier, we cannot check directory/file write permissions
     $output = +{
         type => 'file',
-        path => $opt->{output_file},
+        path => $opt->{'output-file'},
         # format ?
     };
-} elsif (defined $opt->{forward_primary}) {
+} elsif (defined $opt->{'forward-primary'}) {
     $output = +{
         type => 'forward',
-        primary => [map { [split(/:/, $_)] } @{$opt->{forward_primary}}],
-        secondary => [map { [split(/:/, $_)] } @{$opt->{forward_secondary} || []}],
+        primary => [map { [split(/:/, $_)] } @{$opt->{'forward-primary'}}],
+        secondary => [map { [split(/:/, $_)] } @{$opt->{'forward-secondary'} || []}],
         piped_checker => $checker_pipe,
     };
 } elsif (defined $opt->{stderr}) {
@@ -163,6 +164,7 @@ if (defined $opt->{command}) {
         command => $opt->{command},
         children => $opt->{'x-children'} || 1,
         respawn => $opt->{'x-respawn'} || 0,
+        piped_checker => $checker_pipe,
         in => +{
             format => $in_format[0], # { type => TYPENAME, ( fields => [FIELDS] ) }
             time => +{
@@ -194,8 +196,8 @@ debugf "Configured filter: %s", ($filter || 'undefined');
 
 ### Ping options
 my $ping = undef;
-if (defined $opt->{ping_options}) {
-    my ($ping_tag,$ping_data,$ping_interval) = split(/:/, $opt->{ping_options});
+if (defined $opt->{'ping'}) {
+    my ($ping_tag,$ping_data,$ping_interval) = split(/:/, $opt->{'ping'});
     $ping_interval ||= 60;
     croakf "Ping tag is invalid" unless $ping_tag;
     croakf "Ping data is invalid" unless $ping_data;
