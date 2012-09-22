@@ -26,7 +26,7 @@ sub init {
 
     infof "Starting Input plugin: %s", ref($self);
 
-    $self->{queue} = $queue;
+    $self->{__queue} = $queue;
 
     $self->start() if $self->can('start');
 }
@@ -37,7 +37,7 @@ sub init {
 
 sub buffer {
     my ($self) = @_;
-    my $queue = $self->{queue};
+    my $queue = $self->{__queue};
     my $buffer;
     foreach my $b (@$queue) {
         next if $b->marked();
@@ -75,7 +75,7 @@ sub emits {
 # (tag, arrayref-of-[time, record]) OR (tag, msgpack-of-arrayref-of-[time, record])
 sub emits_entries {
     my ($self, $tag, $data) = @_;
-    push $self->{queue}, Fluent::Agent::Buffer->new(tag => $tag, data => $data);
+    push $self->{__queue}, Fluent::Agent::Buffer->new(tag => $tag, data => $data);
 }
 
 sub stop {

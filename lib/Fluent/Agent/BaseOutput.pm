@@ -29,28 +29,28 @@ sub init {
 
     infof "Starting Output plugin: %s", ref($self);
 
-    $self->{queue} = $queue;
-    $self->{interval} = $self->{watch_interval} || DEFAULT_OUTPUT_EVENT_INTERVAL;
+    $self->{__queue} = $queue;
+    $self->{__interval} = $self->{watch_interval} || DEFAULT_OUTPUT_EVENT_INTERVAL;
 
     $self->start() if $self->can('start');
 
     my $output_timer_event = sub {
-        return if scalar(@{$self->{queue}}) < 1;
         # debugf "output queue size %s, to output", scalar(@{$self->{queue}});
-        my $buffer = shift $self->{queue};
+        my $buffer = shift $self->{__queue};
+        return unless defined $buffer;
         # debugf "output plugin %s", ref($self);
 
         my $callback = sub {
             my $result = shift;
-            push $self->{queue}, $buffer unless $result;
+            push $self->{__queue}, $buffer unless $result;
             $result;
         };
         $self->output($buffer, $callback);
     };
 
     my $timer = UV::timer_init();
-    $self->{timer} = $timer;
-    UV::timer_start($timer, $self->{interval}, $self->{interval}, $output_timer_event);
+    $self->{__timer} = $timer;
+    UV::timer_start($timer, $self->{__interval}, $self->{__interval}, $output_timer_event);
 }
 
 # sub start {
@@ -66,7 +66,7 @@ sub stop {
 
     infof "Stopping Output plugin: %s", ref($self);
 
-    UV::timer_stop($self->{timer});
+    UV::timer_stop($self->{__timer});
     $self->shutdown() if $self->can('shutdown');
 }
 
