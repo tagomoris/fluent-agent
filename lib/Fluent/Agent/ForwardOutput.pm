@@ -5,14 +5,15 @@ use warnings;
 use English;
 use Log::Minimal;
 
-use base 'Fluent::Agent::BaseOutput';
-
 use List::MoreUtils;
 use Try::Tiny;
 
 use Data::MessagePack;
 
 use UV;
+
+use base 'Fluent::Agent::BaseOutput';
+use Fluent::Agent::IOUtil;
 
 use constant DEFAULT_CONNECT_TIMEOUT => 5; # 5sec
 
@@ -127,8 +128,6 @@ sub maintain_connections {
         next unless $status->{tcp} and $status->{timeout} and $now > $status->{timeout};
 
         my $tcp = $status->{tcp};
-        my $queue_size = scalar(@{$self->{connection_queue}});
-
         my $index = List::MoreUtils::first_index { $_->[0] == $tcp } @{$self->{connection_queue}}; # queue is arrayref of [tcp,server]
         if ($index >= 0) {
             splice($self->{connection_queue}, $index, 1);
@@ -213,50 +212,20 @@ sub send_data {
     my $pair = shift $self->{connection_queue};
     return $callback->(0) unless $pair; # no one connection established (yet?), or all connections are in busy
 
-    my ($tcp, $server) = @$pair;
+    my ($tcp, $host, $port) = ($pair->[0], $pair->[1]->[0], $pair->[1]->[1]);
+    my $target = "host $host, port $port";
 
-    my $written = 0;
-    my $piped = 0;
-    my $timeout = 0;
-
-    my $timer = UV::timer_init();
-    my $timeout_callback = sub {
-        return if $written or $piped; # successfully sent, or failed by SIGPIPE already.
-        warnf "Failed to send message, timeout, to host %s, port %s", @$server, UV::strerror(UV::last_error());
-        $timeout = 1;
-        if ($tcp) { # UV::write() not failed yet
-            $self->broken_connection($tcp, $server);
-            $callback->(0);
+    my $cb = sub {
+        my ($result) = @_;
+        if ($result) {
+            push $self->{connection_queue}, [$tcp, $server];
+            return $callback->(1);
         }
-    };
-    my $write_callback = sub {
-        my ($status) = @_;
-        if ($status != 0) { # failed to write
-            return if $timeout or $piped; # already failed in this fluent-agent by write timeout or SIGPIPE
-
-            warnf "Failed to send message to host %s, port %s, message: %s", @$server, UV::strerror(UV::last_error());
-            $self->broken_connection($tcp, $server);
-            $callback->(0);
-        }
-        if ($timeout) {
-            #TODO: mmm.... actually sended?
-            warnf "Timeout detected for host %s, port %s", @$server;
-            return;
-        }
-
-        # successfully sent
-        $written = 1;
-        push $self->{connection_queue}, [$tcp, $server];
-        $callback->(1);
-    };
-    UV::write($tcp, $msg, $write_callback);
-    if ($self->{piped}->()) {
-        warnf "ForwardOutput connection reset by peer, host %s:%s", @$server;
+        # fail
         $self->broken_connection($tcp, $server);
-        $piped = 1;
-        return $callback->(0);
-    }
-    UV::timer_start($timer, (DEFAULT_WRITE_TIMEOUT * 1000), 0, $timeout_callback);
+        $callback->(0);
+    };
+    Fluent::Agent::IOUtil->write($target, $tcp, $msg, $self->{piped}, $cb);
 }
 
 sub start {
