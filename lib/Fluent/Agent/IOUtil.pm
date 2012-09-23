@@ -45,15 +45,17 @@ sub write {
             return;
         }
         # successfully written
+        debugf "Successfully written into stream";
         $written = 1;
         $callback->(1);
     };
-    UV::write($stream, $msg, $callback);
+    UV::write($stream, $msg, $write_callback);
     if ($piped_checker->()) {
         warnf "%s Pipe reset by peer, %s", $label, $called;
         $piped = 1;
         return $callback->(0);
     }
+    #TODO needs one-time map to terminate on shutdown ?
     UV::timer_start($timer, (DEFAULT_WRITE_TIMEOUT * 1000), 0, $timeout_callback);
 }
 
