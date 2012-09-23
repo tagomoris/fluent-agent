@@ -14,6 +14,7 @@ use Fluent::Agent::Buffer;
 
 use Fluent::Agent::Input;
 use Fluent::Agent::Output;
+use Fluent::Agent::Filter;
 use Fluent::Agent::PingMessage;
 
 #TODO use Fluent::Agent::Filter;
@@ -175,6 +176,7 @@ sub stop {
     $self->{filter} and $self->{filter}->stop();
     $self->{output}->stop();
 
+    $SIG{ TERM } = $SIG{ HUP } = $SIG{ INT } = 'DEFAULT';
 
     debugf "Stopping complete";
 }
