@@ -79,12 +79,15 @@ $Log::Minimal::DIE = sub {
     die "$time [$type] ($PID) $message at $trace\n";
 };
 croakf "Log path (-L or --log) MUST be specified when daemonized" if $opt->{daemonize} and not defined($opt->{logpath});
+use IO::Handle;
 if (defined $opt->{logpath}) {
     my $logpath = $opt->{logpath};
     open(STDOUT, ">> $logpath") or die "failed to reopen STDOUT to $logpath";
     open(STDERR, ">> $logpath") or die "failed to reopen STDERR to $logpath";
-    use IO::Handle;
     autoflush STDOUT 1;
+    autoflush STDERR 1;
+} else { # tty
+    $Log::Minimal::COLOR = 1;
     autoflush STDERR 1;
 }
 
