@@ -218,11 +218,11 @@ sub send_data {
     my $cb = sub {
         my ($result) = @_;
         if ($result) {
-            push $self->{connection_queue}, [$tcp, $server];
+            push $self->{connection_queue}, $pair;
             return $callback->(1);
         }
         # fail
-        $self->broken_connection($tcp, $server);
+        $self->broken_connection(@$pair);
         $callback->(0);
     };
     Fluent::Agent::IOUtil->write($target, $tcp, $msg, $self->{piped}, $cb);
