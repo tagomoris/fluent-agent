@@ -72,21 +72,23 @@ sub next_record {
     my $self = shift;
     croakf "failed to iterate about non-marked buffer" unless $self->{mark};
 
+    debugf "Buffer type %s, data: %s", $self->{type}, $self->{data};
+
     $self->{position} //= 0;
     if ($self->{type} eq 'list') {
         return $self->{data}->[ $self->{position}++ ];
     }
     elsif ($self->{type} eq 'forward') {
-        return undef unless $self->{data}->[1]->[ $self->{position} ];
-        return [$self->{data}->[0], @{$self->{data}->[1]->[ $self->{position}++ ]}];
+        return undef unless $self->{data}->[0]->[1]->[ $self->{position} ];
+        return [$self->{data}->[0]->[0], @{$self->{data}->[0]->[1]->[ $self->{position}++ ]}];
     }
     else { #msgpack
         unless ($self->{unpacker}) {
             $self->{unpacker} = Data::MessagePack::Stream->new;
-            $self->{unpacker}->feed($self->{data}->[1]);
+            $self->{unpacker}->feed($self->{data}->[0]->[1]);
         }
         return undef unless $self->{unpacker}->next;
-        return [$self->{data}->[0], @{$self->{unpacker}->data}];
+        return [$self->{data}->[0]->[0], @{$self->{unpacker}->data}];
     }
 }
 
