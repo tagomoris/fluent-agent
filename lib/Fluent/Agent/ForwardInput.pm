@@ -8,6 +8,7 @@ use Log::Minimal;
 use Try::Tiny;
 use Time::Piece;
 use Data::MessagePack;
+use Data::MessagePack::Stream;
 
 use UV;
 
@@ -19,9 +20,10 @@ sub configure {
     my ($self, %args) = @_;
     $self->{port} = $args{port};
     $self->{open_sockets} = +{};
-    my $mp = Data::MessagePack->new();
-    $mp->prefer_integer(1);
-    $self->{mp} = $mp;
+    # my $mp = Data::MessagePack->new();
+    # my $mp = Data::MessagePack->new->canonical->utf8;
+    # $mp->prefer_integer(1);
+    # $self->{mp} = $mp;
     $self;
 }
 
@@ -52,7 +54,10 @@ sub start {
             warnf 'accept failed: %s', UV::strerror(UV::last_error());
             return;
         }
-        $self->{open_sockets}->{"$client"} = +{ client => $client, buf => '' };
+        $self->{open_sockets}->{"$client"} = +{
+            client => $client,
+            mp => Data::MessagePack::Stream->new,
+        };
         UV::read_start($client, sub { my ($nread, $buf) = @_; $self->read($client, $nread, $buf); });
     })
         && croakf 'listen error, port %s: %s', $self->{port}, UV::strerror(UV::last_error());
@@ -75,7 +80,6 @@ sub read {
         # nothing to read
         return;
     }
-
     # message Entry {
     #   1: long time
     #   2: object record
@@ -96,30 +100,41 @@ sub read {
     #   2: long? time
     #   3: object record
     # }
-    my $msg;
-    debugf "open_sockets %s", $self->{open_sockets};
+
+    debugf "Received buffer: %s", $buf;
+
+    my $stats = $self->{open_sockets}->{$client_key};
+    my $unpacker = $stats->{mp};
+
     debugf "client socket %s", $self->{open_sockets}->{$client_key};
-    my $fullbuf = $self->{open_sockets}->{$client_key}->{buf} . $buf;
-    try {
-        $msg = $self->{mp}->unpack($fullbuf);
-        $self->{open_sockets}->{$client_key}->{buf} = '';
-    } catch {
-        $msg = undef;
-        $self->{open_sockets}->{$client_key}->{buf} = $fullbuf;
-    };
-    return unless $msg;
 
-    my $tag = $msg->[0];
-    my $entries = $msg->[1];
+    my @objects;
+    $unpacker->feed($buf);
+    while($unpacker->next) {
+        push @objects, $unpacker->data;
+    }
+    debugf "deserialized objects %s", \@objects;
 
-    if (scalar(@$msg) == 3) { # Message
-        $self->emit($tag, @$entries);
-    }
-    elsif (ref($entries) eq 'Array') { # Forward
-        $self->emits_entries($tag, $entries);
-    }
-    else { # PackedForward
-        $self->emits_entries($tag, $entries);
+    return unless @objects;
+
+    my $emits = 0;
+    foreach my $obj (@objects) {
+        if (scalar(@$obj) == 3) { # Message
+            $self->emit(@$obj);
+            $emits += 1;
+            next;
+        }
+        elsif (scalar(@$obj) == 2) { # Forward or PackedForward (flushed once by once over emits_entries)
+            if ($emits > 0) {
+                $self->try_flush();
+                $emits = 0;
+            }
+            my ($tag, $entries) = @$obj;
+            $self->emits_entries($tag, $entries);
+        }
+        else {
+            warnf "ForwardInput receives data with unknown format: %s", [map { ref($_) } @$obj ];
+        }
     }
     $self;
 }
