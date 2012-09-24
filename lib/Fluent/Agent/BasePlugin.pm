@@ -109,6 +109,13 @@ sub buffer {
     $buffer;
 }
 
+sub try_flush {
+    my ($self) = shift;
+    my $buffer = $self->buffer;
+    $buffer->mark() if scalar(@{$buffer->data}) > 0;
+    $self;
+}
+
 sub emit {
     my ($self, $tag, $time, $record) = @_;
     my $buffer = $self->buffer;
