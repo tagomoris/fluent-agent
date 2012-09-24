@@ -8,9 +8,11 @@ use Time::HiRes qw//;
 
 use Data::MessagePack::Stream;
 
+use constant DEFAULT_FLUSH_INTERVAL => 1;
+
 sub new {
     my ($this, %args) = @_;
-    my $flush_interval = $args{flush_interval} || 3; # 3sec
+    my $flush_interval = $args{flush_interval} || DEFAULT_FLUSH_INTERVAL;
     my ($sec, $usec) = Time::HiRes::gettimeofday();
     my $self = +{type => 'list', data => [], mark => 0, flush_time => [$sec + $flush_interval, $usec]};
 
