@@ -84,6 +84,7 @@ sub configure {
     } else {
         croakf "Unkown format for deserializer: %s", $in->{format}->{type};
     }
+    my $localtime = Time::Piece::localtime();
     $self->{deserializer} = sub {
         my ($line) = @_;
         my $record = $parser->($line);
@@ -96,7 +97,7 @@ sub configure {
         if ($out_time_format eq '%s' and $rawtime) {
             $time = int($rawtime);
         } elsif ($rawtime) {
-            try { $time = Time::Piece->strptime($rawtime, $out_time_format)->epoch; } catch {
+            try { $time = $localtime->strptime($rawtime, $out_time_format)->epoch; } catch {
                 warnf("Failed to parse time: field %s, format %s, value %s (using current time)",
                       $out_time_field, $out_time_format, $rawtime);
             }
